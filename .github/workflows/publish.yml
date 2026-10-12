@@ -1,0 +1,48 @@
+name: Publish slot (4x daily)
+
+# Peak reading times in India (IST), run a few minutes after the hour so GitHub's queue delay is absorbed:
+#   07:35 morning commute   12:35 lunch   18:35 evening commute   21:05 night
+# UTC cron:  02:05          07:05         13:05                   15:35
+on:
+  schedule:
+    - cron: "5 2 * * *"
+    - cron: "5 7 * * *"
+    - cron: "5 13 * * *"
+    - cron: "35 15 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m newsbot.publish
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          BRAND_NAME: ${{ secrets.BRAND_NAME }}
+          BRAND_HANDLE: ${{ secrets.BRAND_HANDLE }}
+          USE_GOOGLE_NEWS: ${{ secrets.USE_GOOGLE_NEWS }}
+          ATTACH_LINKS: ${{ secrets.ATTACH_LINKS }}
+          MAX_POSTS_PER_DAY: ${{ secrets.MAX_POSTS_PER_DAY }}
+          MAX_POLITICS_PER_DAY: ${{ secrets.MAX_POLITICS_PER_DAY }}
+          ELECTION_SILENCE: ${{ secrets.ELECTION_SILENCE }}

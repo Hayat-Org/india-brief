@@ -1,0 +1,50 @@
+name: Health checks
+
+on:
+  schedule:
+    - cron: "40 12 * * *"   # daily summary, ~18:10 IST
+    - cron: "15 3 * * 1"    # weekly: token refresh + feed check, Monday ~08:45 IST
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "daily or weekly"
+        default: "weekly"
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run health job
+        run: |
+          MODE="${{ github.event.inputs.mode }}"
+          if [ -z "$MODE" ]; then
+            if [ "${{ github.event.schedule }}" = "15 3 * * 1" ]; then MODE=weekly; else MODE=daily; fi
+          fi
+          python -m newsbot.health "$MODE"
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          BRAND_NAME: ${{ secrets.BRAND_NAME }}
+          BRAND_HANDLE: ${{ secrets.BRAND_HANDLE }}
+          USE_GOOGLE_NEWS: ${{ secrets.USE_GOOGLE_NEWS }}
+          ATTACH_LINKS: ${{ secrets.ATTACH_LINKS }}
+          MAX_POSTS_PER_DAY: ${{ secrets.MAX_POSTS_PER_DAY }}
+          MAX_POLITICS_PER_DAY: ${{ secrets.MAX_POLITICS_PER_DAY }}
