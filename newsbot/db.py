@@ -59,6 +59,16 @@ class DB:
             "select": "*",
         })
 
+    def status_counts(self, hours: int = 72) -> dict:
+        """{status: number of articles} for stories first seen in the last `hours`."""
+        since = _iso(datetime.now(timezone.utc) - timedelta(hours=hours))
+        rows = self._req("GET", "/articles", params={
+            "select": "status", "created_at": f"gte.{since}", "limit": "5000"})
+        counts = {}
+        for r in rows:
+            counts[r["status"]] = counts.get(r["status"], 0) + 1
+        return counts
+
     # --- settings ---------------------------------------------------------
     def get_setting(self, key: str, default: str = ""):
         rows = self._req("GET", "/settings", params={"key": f"eq.{key}", "select": "value"})

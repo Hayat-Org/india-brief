@@ -5,20 +5,24 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
 import requests
 from bs4 import BeautifulSoup
 
-from . import ai, cards, config, dedup, media, meta, safety, telegram
+from . import ai, cards, config, dedup, media, meta, runlog, safety, telegram
 from . import trends as trendlib
-from .sources import Feed
+from .sources import Feed, fallback_feed
 
 IST = timezone(timedelta(hours=5, minutes=30))
-KIND_RANK = {"govt": 0, "factcheck": 0, "news": 1, "state_gn": 2}
+KIND_RANK = {"govt": 0, "factcheck": 0, "niche": 1, "news": 1, "state_gn": 2}
+MAINSTREAM_KINDS = ("news", "state_gn")        # big national/regional outlets and Google News queries
+SPOTLIGHT_SOURCE_KINDS = ("niche", "govt")     # sources a Spotlight story may come from
+MAX_UNDATED_PER_FEED = 3                       # feeds without dates: take only the first few
 
 
 # ---------------------------------------------------------------------------
-# helpers
+# time helpers
 # ---------------------------------------------------------------------------
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -29,9 +33,23 @@ def iso(dt: datetime) -> str:
 
 
 def parse_ts(value) -> datetime:
-    if isinstance(value, datetime):
-        return value
-    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    dt = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def story_time(a: dict) -> datetime:
+    """When the story was PUBLISHED (falls back to when we first saw it)."""
+    raw = a.get("published_at") or a.get("created_at")
+    return parse_ts(raw) if raw else now_utc()
+
+
+def story_age_hours(a: dict, now: datetime = None) -> float:
+    return max(0.0, ((now or now_utc()) - story_time(a)).total_seconds() / 3600)
+
+
+def is_too_old(a: dict, now: datetime = None) -> bool:
+    """The freshness rule: nothing published more than ARTICLE_MAX_AGE_HOURS ago is ever posted."""
+    return story_age_hours(a, now) > config.ARTICLE_MAX_AGE_HOURS
 
 
 def ist_day_start(now: datetime) -> datetime:
@@ -52,6 +70,16 @@ def get_mode(db) -> str:
     return db.get_setting("mode", config.DEFAULT_MODE)
 
 
+def queue_summary(db) -> str:
+    try:
+        c = db.status_counts(72)
+        posted = stories(db.list_posted_since(iso(ist_day_start(now_utc()))))
+        return (f"Queue: {c.get('new', 0)} waiting to be scored · {c.get('candidate', 0)} candidates · "
+                f"{c.get('pending_review', 0)} awaiting your tap · {len(posted)}/{config.MAX_POSTS_PER_DAY} posted today")
+    except Exception as ex:
+        return f"Queue: unavailable ({str(ex)[:80]})"
+
+
 # ---------------------------------------------------------------------------
 # feed fetching
 # ---------------------------------------------------------------------------
@@ -66,13 +94,73 @@ class Entry:
     published: datetime
 
 
-def fetch_feed(feed: Feed, limit: int = 15) -> list:
+@dataclass
+class FeedResult:
+    name: str
+    kind: str
+    ok: bool = False
+    items: int = 0
+    via: str = "direct"        # direct | fallback (Google News site: search)
+    error: str = ""
+    direct_error: str = ""
+
+
+FEED_HEADERS = {
+    "Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
+    "Accept-Language": "en-IN,en;q=0.9",
+}
+
+
+def describe_error(ex: Exception) -> str:
+    if isinstance(ex, requests.HTTPError) and ex.response is not None:
+        return f"HTTP {ex.response.status_code}"
+    if isinstance(ex, requests.Timeout):
+        return "timed out"
+    if isinstance(ex, requests.ConnectionError):
+        return "connection failed"
+    return f"{type(ex).__name__}: {str(ex)[:80]}"
+
+
+def _get(url: str, timeout: int = 25) -> bytes:
+    """GET with one retry for timeouts, dropped connections, 429 and 5xx. 403/404 are final."""
+    for attempt in (1, 2):
+        try:
+            r = requests.get(url, headers={"User-Agent": config.USER_AGENT, **FEED_HEADERS}, timeout=timeout)
+            if r.status_code in (429, 500, 502, 503, 504) and attempt == 1:
+                time.sleep(2)
+                continue
+            r.raise_for_status()
+            return r.content
+        except (requests.Timeout, requests.ConnectionError):
+            if attempt == 1:
+                time.sleep(2)
+                continue
+            raise
+    raise RuntimeError("unreachable")  # pragma: no cover
+
+
+def _entry_time(e):
+    ts = e.get("published_parsed") or e.get("updated_parsed")
+    if ts:
+        try:
+            return datetime(*ts[:6], tzinfo=timezone.utc)
+        except Exception:
+            pass
+    raw = (e.get("published") or e.get("updated") or "").strip()
+    for candidate in (raw, raw.replace(",", " ")):
+        if candidate:
+            try:
+                return parse_ts(parsedate_to_datetime(candidate))
+            except Exception:
+                continue
+    return None
+
+
+def _parse(content: bytes, feed: Feed, limit: int = 15, now: datetime = None) -> list:
     import feedparser  # imported here so the rest of the pipeline is testable without it
-    r = requests.get(feed.url, headers={"User-Agent": config.USER_AGENT}, timeout=20)
-    r.raise_for_status()
-    parsed = feedparser.parse(r.content)
-    out = []
-    for e in parsed.entries:
+    now = now or now_utc()
+    dated, undated = [], []
+    for e in feedparser.parse(content).entries:
         title, link = (e.get("title") or "").strip(), (e.get("link") or "").strip()
         if not title or not link:
             continue
@@ -80,41 +168,66 @@ def fetch_feed(feed: Feed, limit: int = 15) -> list:
         if isinstance(e.get("source"), dict):
             src = (e["source"].get("title") or "").strip()
         src = src or feed.name.replace("GN:", "Google News")
-        ts = e.get("published_parsed") or e.get("updated_parsed")
-        published = datetime(*ts[:6], tzinfo=timezone.utc) if ts else now_utc()
+        ts = _entry_time(e)
         summary = BeautifulSoup(e.get("summary") or "", "html.parser").get_text(" ", strip=True)
-        out.append(Entry(dedup.strip_source(title, src), link, summary[:600], src,
-                         feed.kind, feed.state, published))
-    out.sort(key=lambda x: x.published, reverse=True)
-    return out[:limit]
+        item = Entry(dedup.strip_source(title, src), link, summary[:600], src, feed.kind, feed.state,
+                     min(ts, now) if ts else now)  # a date in the future is clamped to now
+        (dated if ts else undated).append(item)
+    dated.sort(key=lambda x: x.published, reverse=True)
+    return (dated + undated[:MAX_UNDATED_PER_FEED])[:limit]
 
 
-def collect_entries(feeds: list, workers: int = 8):
-    """Fetch all feeds in parallel. Returns (entries, failed_feed_names)."""
-    entries, failed = [], []
+def fetch_feed_result(feed: Feed, limit: int = 15):
+    """Fetch one feed; if it is blocked or empty, try its Google News 'site:' stand-in.
+    Never raises. Returns (FeedResult, entries)."""
+    res = FeedResult(feed.name, feed.kind)
+    try:
+        entries = _parse(_get(feed.url), feed, limit)
+        if entries:
+            res.ok, res.items = True, len(entries)
+            return res, entries
+        res.direct_error = "no items"
+    except Exception as ex:
+        res.direct_error = describe_error(ex)
+    fb = fallback_feed(feed) if config.USE_GOOGLE_NEWS else None
+    if fb is None:
+        res.error = res.direct_error
+        return res, []
+    try:
+        entries = _parse(_get(fb.url), fb, limit)
+        if entries:
+            res.ok, res.items, res.via, res.error = True, len(entries), "fallback", res.direct_error
+            return res, entries
+        res.error = f"{res.direct_error}; fallback returned no items"
+    except Exception as ex:
+        res.error = f"{res.direct_error}; fallback failed: {describe_error(ex)}"
+    return res, []
 
-    def work(feed):
-        try:
-            return feed, fetch_feed(feed), None
-        except Exception as ex:
-            return feed, [], str(ex)[:100]
 
+def collect_entries(feeds: list, workers: int = 10):
+    """Fetch all feeds in parallel. Returns (entries, [FeedResult])."""
+    entries, results = [], []
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for feed, items, err in pool.map(work, feeds):
-            if err or not items:
-                failed.append(f"{feed.name}: {err or 'no items'}")
+        for res, items in pool.map(fetch_feed_result, feeds):
+            results.append(res)
             entries.extend(items)
-    return entries, failed
+    return entries, results
 
 
 # ---------------------------------------------------------------------------
 # ingest: dedup + cross-source corroboration
 # ---------------------------------------------------------------------------
+def mainstream_count(a: dict) -> int:
+    """How many big mainstream outlets carry this story. Sources saved before this field
+    existed have no 'kind' and are counted as mainstream (the cautious reading)."""
+    return sum(1 for s in (a.get("sources") or []) if s.get("kind", "news") in MAINSTREAM_KINDS)
+
+
 def ingest(db, entries: list, now: datetime = None) -> dict:
     now = now or now_utc()
     recent = db.recent_articles(72)
     known_urls = {r["url"] for r in recent if r.get("url")}
-    stats = {"seen": len(entries), "new": 0, "merged": 0, "dup": 0, "junk": 0, "old": 0}
+    stats = {"seen": len(entries), "new": 0, "merged": 0, "dup": 0, "junk": 0, "old": 0, "niche_new": 0}
     max_age = timedelta(hours=config.ARTICLE_MAX_AGE_HOURS)
 
     for e in sorted(entries, key=lambda x: x.published, reverse=True):
@@ -131,7 +244,7 @@ def ingest(db, entries: list, now: datetime = None) -> dict:
         if match:
             names = {s["name"] for s in (match.get("sources") or [])}
             if e.source not in names:  # a different outlet covering the same story
-                sources = list(match.get("sources") or []) + [{"name": e.source, "url": e.url}]
+                sources = list(match.get("sources") or []) + [{"name": e.source, "url": e.url, "kind": e.kind}]
                 match["sources"], match["corroboration"] = sources, len(sources)
                 db.update_article(match["id"], {"sources": sources, "corroboration": len(sources)})
                 stats["merged"] += 1
@@ -143,65 +256,105 @@ def ingest(db, entries: list, now: datetime = None) -> dict:
             "url": e.url, "title": e.title, "title_norm": dedup.normalize_title(e.title),
             "snippet": e.snippet, "source": e.source, "source_kind": e.kind,
             "feed_state": e.state or None,
-            "sources": [{"name": e.source, "url": e.url}], "corroboration": 1,
+            "sources": [{"name": e.source, "url": e.url, "kind": e.kind}], "corroboration": 1,
             "published_at": iso(e.published), "status": "new",
         })
         known_urls.add(e.url)
         recent.insert(0, row)
         stats["new"] += 1
+        if e.kind in SPOTLIGHT_SOURCE_KINDS:
+            stats["niche_new"] += 1
     return stats
 
 
 # ---------------------------------------------------------------------------
 # scoring
 # ---------------------------------------------------------------------------
+def score_priority(a: dict) -> float:
+    """Which stories get scored first when more arrive than the per-run limit.
+    Multi-outlet stories first, and specialist/official/fact-check sources get a boost so
+    under-covered stories are not starved by the volume of mainstream headlines."""
+    return min(a.get("corroboration") or 1, 4) + (1.5 if a.get("source_kind") in ("govt", "factcheck", "niche") else 0)
+
+
 def score_pending(db, now: datetime = None, trends: dict = None) -> dict:
     now = now or now_utc()
     new = db.list_by_status("new", limit=500)
-    stats = {"scored": 0, "candidates": 0, "discarded": 0, "errors": 0, "stale": 0}
+    stats = {"scored": 0, "candidates": 0, "discarded": 0, "errors": 0, "stale": 0, "backlog": 0,
+             "below_min": 0, "not_india": 0, "opinion": 0, "promo": 0, "niche_candidates": 0,
+             "error_samples": [], "top": []}
     fresh = []
     for a in new:
-        if now - parse_ts(a["created_at"]) > timedelta(hours=config.ARTICLE_MAX_AGE_HOURS):
+        if is_too_old(a, now):
             db.update_article(a["id"], {"status": "discarded", "hold_reason": "stale"})
             stats["stale"] += 1
         else:
             fresh.append(a)
-    # Stories several outlets cover, then official/fact-check sources, get scored first.
-    fresh.sort(key=lambda a: (-(a.get("corroboration") or 1),
-                              KIND_RANK.get(a.get("source_kind"), 2)))
-    for a in fresh[: config.MAX_SCORE_PER_RUN]:
+    fresh.sort(key=score_priority, reverse=True)  # stable: newest first among equals
+    todo = fresh[: config.MAX_SCORE_PER_RUN]
+    stats["backlog"] = len(fresh) - len(todo)
+    size, failed_chunks = max(1, config.SCORE_BATCH_SIZE), 0
+
+    for i in range(0, len(todo), size):
+        chunk = todo[i:i + size]
         try:
-            s = ai.score_article(a)
+            results = ai.score_batch(chunk)
+            failed_chunks = 0
         except Exception as ex:
-            stats["errors"] += 1
-            print(f"score error #{a['id']}: {str(ex)[:150]}")
+            stats["errors"] += len(chunk)
+            if len(stats["error_samples"]) < 3:
+                stats["error_samples"].append(str(ex)[:400])
+            failed_chunks += 1
+            if failed_chunks >= 2:  # keys/quota/outage: stop burning time, try again next run
+                stats["backlog"] += max(0, len(todo) - (i + size))
+                break
             continue
-        stats["scored"] += 1
-        keyword_reason = safety.is_sensitive(f"{a['title']} {a.get('snippet') or ''}")
-        sensitive = s["sensitive"] or bool(keyword_reason)
-        reason = s["sensitive_reason"] or keyword_reason or ""
-        values = {
-            "category": s["category"], "state": s["state"],
-            "significance": s["significance"], "impact": s["impact"], "interest": s["interest"],
-            "combined": s["combined"], "sensitive": sensitive, "sensitive_reason": reason,
-            "is_factcheck": s["is_factcheck"],
-            "trend_boost": trendlib.trend_boost(a["title"], trends or {}),
-        }
-        if not s["is_india"] or s["is_opinion"] or s["is_promotional"] or s["combined"] < config.MIN_SCORE:
-            values["status"] = "discarded"
-            stats["discarded"] += 1
-        else:
-            values["status"] = "candidate"
-            stats["candidates"] += 1
-        db.update_article(a["id"], values)
+        for a in chunk:
+            s = results.get(a["id"])
+            if s is None:
+                stats["errors"] += 1
+                if len(stats["error_samples"]) < 3:
+                    stats["error_samples"].append(f"#{a['id']}: model returned no usable score")
+                continue
+            stats["scored"] += 1
+            keyword_reason = safety.is_sensitive(f"{a['title']} {a.get('snippet') or ''}")
+            sensitive = s["sensitive"] or bool(keyword_reason)
+            reason = s["sensitive_reason"] or keyword_reason or ""
+            values = {
+                "category": s["category"], "state": s["state"],
+                "significance": s["significance"], "impact": s["impact"], "interest": s["interest"],
+                "combined": s["combined"], "sensitive": sensitive, "sensitive_reason": reason,
+                "is_factcheck": s["is_factcheck"],
+                "trend_boost": trendlib.trend_boost(a["title"], trends or {}),
+            }
+            if not s["is_india"]:
+                values["status"] = "discarded"; stats["not_india"] += 1
+            elif s["is_opinion"]:
+                values["status"] = "discarded"; stats["opinion"] += 1
+            elif s["is_promotional"]:
+                values["status"] = "discarded"; stats["promo"] += 1
+            elif s["combined"] < config.MIN_SCORE:
+                values["status"] = "discarded"; stats["below_min"] += 1
+            else:
+                values["status"] = "candidate"
+                stats["candidates"] += 1
+                if a.get("source_kind") in SPOTLIGHT_SOURCE_KINDS and mainstream_count(a) == 0:
+                    stats["niche_candidates"] += 1
+                stats["top"].append((s["combined"], a["title"], s["category"], s["state"],
+                                     a.get("corroboration") or 1))
+            if values["status"] == "discarded":
+                stats["discarded"] += 1
+            db.update_article(a["id"], values)
+    stats["top"].sort(reverse=True)
+    stats["top"] = stats["top"][:5]
     return stats
 
 
 def expire_old(db, now: datetime = None) -> int:
-    """Old candidates are no longer news; stale review items expire."""
+    """Candidates older than the freshness window are no longer news; stale review items expire."""
     now, n = now or now_utc(), 0
     for a in db.list_by_status("candidate"):
-        if now - parse_ts(a["created_at"]) > timedelta(hours=config.ARTICLE_MAX_AGE_HOURS):
+        if is_too_old(a, now):
             db.update_article(a["id"], {"status": "discarded", "hold_reason": "stale"})
             n += 1
     for a in db.list_by_status("pending_review"):
@@ -240,15 +393,18 @@ def source_line(a: dict) -> str:
 
 def build_texts(draft: dict, a: dict) -> dict:
     src = source_line(a)
+    spot = bool(draft.get("spotlight"))
     cat_tag = _tag(a.get("category") or "")
     topic = [_tag(t) for t in draft.get("hashtags", [])]
     state = a.get("state") or "National"
     state_tag = [] if state == "National" else [_tag(state)]
-    threads = shorten(draft["threads"], 400) + f"\n\nvia {src}"
+    threads = shorten(draft["threads"], 400) + (f"\n\nLess-covered story · via {src}" if spot else f"\n\nvia {src}")
     if topic:
         threads += f"\n\n{topic[0]}"
-    facebook = (shorten(draft["facebook"], 700) + f"\n\nSource: {src}\n"
-                + " ".join(["#India", cat_tag] + topic[:1]))
+    facebook = (shorten(draft["facebook"], 700)
+                + (f"\n\nSource: {src} (a specialist or regional report that the big national outlets have not yet carried)"
+                   if spot else f"\n\nSource: {src}")
+                + "\n" + " ".join(["#India", cat_tag] + topic[:1]))
     ig_tags = list(dict.fromkeys(topic[:2] + state_tag + [cat_tag, "#India"]))[:5]  # Meta: keep to <=5
     instagram = (shorten(draft["instagram"], 1000)
                  + f"\n\nSource: {src}. Read the full story at the original publisher.\n\n"
@@ -260,8 +416,9 @@ def threads_token(db) -> str:
     return db.get_setting("threads_token", "") or config.THREADS_ACCESS_TOKEN
 
 
-def publish_article(db, a: dict) -> str:
-    """Post to every configured platform independently; one failure never blocks the others."""
+def publish_article(db, a: dict, only: list = None) -> str:
+    """Post to every configured platform independently; one failure never blocks the others.
+    `only` limits the attempt to some platforms (used by Retry); earlier results are kept."""
     draft = a["draft"]
     is_digest = a.get("source_kind") == "digest"
     if is_digest:  # digest texts are already final; links live inside the Facebook text
@@ -272,7 +429,7 @@ def publish_article(db, a: dict) -> str:
         link = (draft.get("link") or a["url"]) if config.ATTACH_LINKS else None
     alt = f"{draft.get('card_headline') or a['title']}. Source: {source_line(a)}"
     platforms = config.enabled_platforms()
-    results = {}
+    results = dict(a.get("results") or {}) if only else {}
     steps = {
         "threads": lambda: meta.post_threads(texts["threads"], link, threads_token(db)),
         "facebook": lambda: meta.post_facebook(texts["facebook"], link),
@@ -281,6 +438,8 @@ def publish_article(db, a: dict) -> str:
         if is_digest else (lambda: meta.post_instagram(texts["instagram"], a["card_url"], alt)),
     }
     for name, fn in steps.items():
+        if only and name not in only:
+            continue
         if name not in platforms:
             results[name] = {"ok": False, "skipped": True}
             continue
@@ -291,23 +450,52 @@ def publish_article(db, a: dict) -> str:
             else:
                 results[name] = {"ok": True, "id": fn()}
         except Exception as ex:
-            results[name] = {"ok": False, "error": str(ex)[:300]}
+            err = str(ex)[:300]
+            hint = meta.explain_error(err)
+            results[name] = {"ok": False, "error": err, **({"hint": hint} if hint else {})}
         time.sleep(0 if config.DRY_RUN else 3)  # polite pacing between API calls
     ok = [k for k, v in results.items() if v.get("ok")]
-    status = "published" if ok else "failed"
-    db.update_article(a["id"], {
-        "status": status, "results": results,
-        "posted_at": iso(now_utc()) if ok else None,
-    })
-    lines = [f"{'✅' if v.get('ok') else ('⏭' if v.get('skipped') else '⚠️')} {k}"
-             + (f": {v.get('error')}" if v.get("error") else "") for k, v in results.items()]
-    telegram.send_text(f"{'Posted' if ok else 'FAILED'} #{a['id']}: {a['title'][:90]}\n" + "\n".join(lines))
-    return status
+    failed = [k for k, v in results.items() if not v.get("ok") and not v.get("skipped")]
+    update = {"status": "published" if ok else "failed", "results": results}
+    if ok and not a.get("posted_at"):
+        update["posted_at"] = iso(now_utc())
+    db.update_article(a["id"], update)
+
+    lines = []
+    for k, v in results.items():
+        if v.get("ok"):
+            lines.append(f"✅ {k}")
+        elif v.get("skipped"):
+            lines.append(f"⏭ {k} (not configured)")
+        else:
+            lines.append(f"❌ {k}: {v.get('error')}" + (f"\n   Likely fix: {v['hint']}" if v.get("hint") else ""))
+            runlog.error(f"#{a['id']} {k}: {v.get('error')}" + (f" → {v['hint']}" if v.get("hint") else ""))
+    head = "Posted" if ok and not failed else ("Partly posted" if ok else "FAILED")
+    marks = ", ".join(f"{k} {'✓' if v.get('ok') else '✗'}" for k, v in results.items() if not v.get("skipped"))
+    runlog.note(f"#{a['id']} → {head.lower()} ({marks})")
+    runlog.activity()
+    buttons = [[{"text": "🔁 Retry failed platforms", "callback_data": f"t:{a['id']}"}]] if failed else None
+    telegram.send_text(f"{head} #{a['id']}: {a['title'][:90]}\n" + "\n".join(lines), buttons=buttons)
+    return "published" if ok else "failed"
+
+
+def retry_failed(db, article: dict) -> str:
+    todo = [k for k, v in (article.get("results") or {}).items() if not v.get("ok") and not v.get("skipped")]
+    if not todo or not article.get("draft"):
+        telegram.send_text(f"#{article['id']}: nothing to retry (no failed platform).")
+        return "nothing"
+    return publish_article(db, article, only=todo)
 
 
 def process_candidate(db, a: dict, breaking: bool = False) -> str:
     """Draft -> safety checks -> card -> (Telegram review | publish)."""
+    tag = f"#{a['id']} ({a.get('combined')}) {a['title'][:70]}"
+    if is_too_old(a):
+        db.update_article(a["id"], {"status": "discarded", "hold_reason": "stale"})
+        runlog.note(f"{tag} → skipped: published more than {config.ARTICLE_MAX_AGE_HOURS}h ago")
+        return "stale"
     mode = get_mode(db)
+    spotlight = bool(a.get("spotlight"))
     link = media.resolve_url(a["url"])
     body = media.fetch_text(link)
     developing = (a.get("corroboration") or 1) < 2 and a.get("source_kind") not in ("govt", "factcheck")
@@ -329,9 +517,10 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
         db.update_article(a["id"], {"attempts": attempts,
                                     "status": "failed" if attempts >= 3 else a["status"]})
         print(f"draft error #{a['id']}: {str(ex)[:150]}")
+        runlog.error(f"{tag} → drafting failed (attempt {attempts}/3): {str(ex)[:300]}")
         return "draft_failed"
 
-    draft["link"], draft["developing"] = link, developing
+    draft["link"], draft["developing"], draft["spotlight"] = link, developing, spotlight
     flags, hold = [], []
     sens = a.get("sensitive") or safety.is_sensitive(f"{a['title']} {a.get('snippet') or ''}")
     if sens:
@@ -346,11 +535,16 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
     if issues:
         flags.extend(issues[:6])
         hold.append("facts check")
-    if developing:
+    if spotlight:
+        flags.append("SPOTLIGHT: only specialist/regional/official sources so far; no big national outlet has "
+                     "carried it. Check the original report before approving.")
+        if not config.SPOTLIGHT_AUTO and a.get("source_kind") != "govt":
+            hold.append("spotlight (single specialist source)")
+    elif developing:
         flags.append("Developing: single outlet so far")
 
     card = cards.render_card(draft["card_headline"] or a["title"], a.get("category") or "Society",
-                             source_line(a), a.get("state") or "National", developing)
+                             source_line(a), a.get("state") or "National", developing, spotlight=spotlight)
     card_url = media.upload_card(card, f"{a['id']}-{int(time.time())}.jpg")
 
     update = {"draft": draft, "card_url": card_url, "breaking": breaking,
@@ -360,6 +554,9 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
         telegram.send_review(merged, draft, card_url, flags)
         db.update_article(a["id"], {**update, "status": "pending_review",
                                     "review_sent_at": iso(now_utc())})
+        why = "; ".join(hold) if hold else "review mode"
+        runlog.note(f"{tag} → sent to you for review ({why})")
+        runlog.activity()
         return "sent_for_review"
     db.update_article(a["id"], {**update, "status": "approved"})
     return publish_article(db, {**merged, "status": "approved"})
@@ -368,10 +565,26 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
 # ---------------------------------------------------------------------------
 # selection
 # ---------------------------------------------------------------------------
+def civic_value(a: dict) -> float:
+    """How much the story matters to people, ignoring how popular it is: (significance + impact) / 2."""
+    return (float(a.get("significance") or 0) + float(a.get("impact") or 0)) / 2
+
+
+def is_spotlight_candidate(a: dict, now: datetime) -> bool:
+    """A Spotlight story: important, from a specialist/regional/official source, and no big
+    mainstream outlet has carried it (after giving them a couple of hours to do so)."""
+    if a.get("source_kind") not in SPOTLIGHT_SOURCE_KINDS or mainstream_count(a) > 0:
+        return False
+    if civic_value(a) < config.SPOTLIGHT_MIN_VALUE:
+        return False
+    seen = (now - parse_ts(a["created_at"])).total_seconds() / 3600 if a.get("created_at") else 0
+    return seen >= config.SPOTLIGHT_MIN_AGE_HOURS
+
+
 def effective_score(a: dict, now: datetime, posted_today: list) -> float:
-    age_h = (now - parse_ts(a["created_at"])).total_seconds() / 3600
+    age_h = story_age_hours(a, now)
     corr = a.get("corroboration") or 1
-    score = float(a["combined"]) + 0.4 * (min(corr, 4) - 1) - 0.12 * age_h
+    score = float(a["combined"]) + 0.4 * (min(corr, 4) - 1) - 0.08 * age_h
     # Popular (trending in India), critical (high significance) and important (high impact)
     # stories get a small lift. Same rules for every topic, party and community.
     score += float(a.get("trend_boost") or 0)
@@ -388,42 +601,101 @@ def effective_score(a: dict, now: datetime, posted_today: list) -> float:
     return score
 
 
-def select_for_slot(db, now: datetime = None) -> list:
+def plan_slot(db, now: datetime = None) -> dict:
+    """Decide what this slot should post, and explain the decision.
+    Returns {"picked": [...], "notes": [human-readable reasons]}."""
     now = now or now_utc()
     posted_today = stories(db.list_posted_since(iso(ist_day_start(now))))
-    pending = db.list_by_status("pending_review")
+    pending_all = db.list_by_status("pending_review")
+    pending = stories(pending_all)
+    notes = [f"Today so far: {len(posted_today)}/{config.MAX_POSTS_PER_DAY} posted · "
+             f"{len(pending_all)} waiting for your tap · mode: {get_mode(db)}"]
     allowed = min(config.MAX_POSTS_PER_SLOT, config.MAX_POSTS_PER_DAY - len(posted_today))
+    if config.MAX_POSTS_PER_DAY - len(posted_today) <= 0:
+        notes.append(f"⛔ Daily limit reached ({config.MAX_POSTS_PER_DAY} posts). Nothing more today.")
+        return {"picked": [], "notes": notes}
     if get_mode(db) != "auto":
-        allowed = min(allowed, config.MAX_PENDING_REVIEW - len(pending))
-    if allowed <= 0:
-        return []
-    politics = sum(1 for p in posted_today + stories(pending) if p.get("category") == "Politics")
-    cands = [a for a in db.list_by_status("candidate") if a.get("combined") is not None]
+        room = config.MAX_PENDING_REVIEW - len(pending_all)
+        if room <= 0:
+            notes.append(f"⛔ {len(pending_all)} posts are waiting for your approval (limit {config.MAX_PENDING_REVIEW}). "
+                         "Tap Approve or Reject on them in Telegram and the next slot will continue.")
+            return {"picked": [], "notes": notes}
+        allowed = min(allowed, room)
+
+    cands = [a for a in db.list_by_status("candidate")
+             if a.get("combined") is not None and not is_too_old(a, now)]
+    if not cands:
+        waiting = len(db.list_by_status("new"))
+        notes.append(f"⛔ No scored candidates in the queue. {waiting} stories are waiting to be scored by the hourly "
+                     "ingest job. If this stays at 0, open the latest Ingest report (it lists AI errors and feed problems).")
+        return {"picked": [], "notes": notes}
+
+    politics = sum(1 for p in posted_today + pending if p.get("category") == "Politics")
     cands.sort(key=lambda a: effective_score(a, now, posted_today), reverse=True)
+    notes.append(f"{len(cands)} candidates; best: {cands[0]['combined']} · {cands[0].get('category')} · "
+                 f"{cands[0]['title'][:70]}")
     picked, used_cats, used_states = [], set(), set()
-    for a in cands:
-        if len(picked) >= allowed:
-            break
+
+    def fits(a) -> bool:
         if a.get("category") in used_cats:
-            continue
+            return False
         if a.get("category") == "Politics" and politics >= config.MAX_POLITICS_PER_DAY:
-            continue  # keep the feed balanced across topics
+            return False  # keep the feed balanced across topics
         st = a.get("state")
-        if st not in (None, "National") and st in used_states:
-            continue
-        picked.append(a)
+        return not (st not in (None, "National") and st in used_states)
+
+    def take(a, spotlight=False):
+        nonlocal politics
+        picked.append({**a, "spotlight": True} if spotlight else a)
         if a.get("category") == "Politics":
             politics += 1
         used_cats.add(a.get("category"))
-        used_states.add(st)
-    return picked
+        used_states.add(a.get("state"))
+
+    # Spotlight lane: at most SPOTLIGHT_PER_DAY a day, takes one place in this slot.
+    spot_used = sum(1 for p in posted_today + pending if (p.get("draft") or {}).get("spotlight"))
+    if spot_used < config.SPOTLIGHT_PER_DAY:
+        spots = sorted((a for a in cands if is_spotlight_candidate(a, now)),
+                       key=lambda a: civic_value(a) + float(a.get("trend_boost") or 0), reverse=True)
+        for a in spots:
+            if fits(a):
+                take(a, spotlight=True)
+                cands = [c for c in cands if c["id"] != a["id"]]
+                notes.append(f"🔦 Spotlight pick: only specialist/official outlets carry it (value {civic_value(a):.1f})")
+                break
+    for a in cands:
+        if len(picked) >= allowed:
+            break
+        if fits(a):
+            take(a)
+    if not picked:
+        notes.append("⛔ Candidates exist but none passed the balance rules (category/state repeats or the Politics cap).")
+    return {"picked": picked[:max(allowed, 0)], "notes": notes}
+
+
+def select_for_slot(db, now: datetime = None) -> list:
+    return plan_slot(db, now)["picked"]
 
 
 def run_slot(db, now: datetime = None) -> dict:
     if is_paused(db):
+        runlog.note("⏸ Paused: nothing will be posted. Send /resume in Telegram to continue.")
         return {"paused": True}
-    expire_old(db, now)
-    outcomes = [process_candidate(db, a) for a in select_for_slot(db, now)]
+    expired = expire_old(db, now)
+    if expired:
+        runlog.note(f"Cleaned up {expired} expired items")
+    plan = plan_slot(db, now)
+    for n in plan["notes"]:
+        runlog.note(n)
+    picked = plan["picked"]
+    if picked:
+        runlog.note(f"Selected {len(picked)} for this slot:")
+        for a in picked:
+            runlog.note(f"  #{a['id']} · {a['combined']} · {a.get('category')} · {a.get('state')}"
+                        f"{' · SPOTLIGHT' if a.get('spotlight') else ''}\n    {a['title'][:90]}")
+    else:
+        runlog.note("Result: nothing was posted or sent this slot (reason above).")
+    outcomes = [process_candidate(db, a) for a in picked]
     return {"processed": len(outcomes), "outcomes": outcomes}
 
 
@@ -438,11 +710,13 @@ def breaking_pass(db, now: datetime = None) -> list:
     out = []
     cands = [a for a in db.list_by_status("candidate")
              if (a.get("combined") or 0) >= config.BREAKING_SCORE
-             and (a.get("corroboration") or 1) >= config.BREAKING_MIN_SOURCES]
+             and (a.get("corroboration") or 1) >= config.BREAKING_MIN_SOURCES
+             and not is_too_old(a, now)]
     cands.sort(key=lambda a: a["combined"], reverse=True)
     for a in cands:
         if used >= config.MAX_BREAKING_PER_DAY or len(posted) + len(out) >= config.MAX_POSTS_PER_DAY:
             break
+        runlog.note(f"⚡ Fast-track: #{a['id']} ({a['combined']}, {a.get('corroboration')} outlets) {a['title'][:80]}")
         out.append(process_candidate(db, a, breaking=True))
         used += 1
     return out
@@ -461,19 +735,29 @@ def handle_callback(db, cb: dict) -> str:
         return "ignored"
     action, _, raw_id = (cb.get("data") or "").partition(":")
     article = db.get_article(int(raw_id)) if raw_id.isdigit() else None
+    msg = cb.get("message") or {}
+    if action == "t":  # retry the platforms that failed
+        if not article or article["status"] not in ("failed", "published"):
+            telegram.answer_callback(cb["id"], "Nothing to retry.")
+            return "stale"
+        telegram.answer_callback(cb["id"], "Retrying…")
+        telegram.clear_buttons(chat, msg.get("message_id"))
+        return retry_failed(db, article)
     if not article or article["status"] != "pending_review":
         telegram.answer_callback(cb["id"], "Already handled or expired.")
         return "stale"
-    msg = cb.get("message") or {}
     if action == "r":
         db.update_article(article["id"], {"status": "rejected"})
         telegram.answer_callback(cb["id"], "Rejected.")
         telegram.clear_buttons(chat, msg.get("message_id"))
+        runlog.note(f"#{article['id']} rejected: {article['title'][:70]}")
+        runlog.activity()
         return "rejected"
     if action == "a":
         telegram.answer_callback(cb["id"], "Approved. Posting…")
         telegram.clear_buttons(chat, msg.get("message_id"))
         db.update_article(article["id"], {"status": "approved"})
+        runlog.note(f"#{article['id']} approved by you: {article['title'][:70]}")
         return publish_article(db, {**article, "status": "approved"})
     return "ignored"
 
@@ -498,9 +782,22 @@ def retract(db, raw_id: str) -> None:
     telegram.send_text(f"Retracted #{article['id']}: {article['title'][:80]}\n" + "\n".join(notes))
 
 
-HELP = ("Commands:\n/status  queue and today's posts\n/pause  stop all posting\n/resume  resume\n"
+HELP = ("Commands:\n/status  queue, today's posts and when each job last ran\n/pause  stop all posting\n/resume  resume\n"
+        "/retry <id>  retry the platforms that failed for a post\n"
         "/retract <id>  take down a published post (deletes on Facebook)\n"
         "/review  approve every post here first\n/auto  auto-post non-sensitive stories")
+
+
+def status_text(db) -> str:
+    c = db.status_counts(72)
+    posted = stories(db.list_posted_since(iso(ist_day_start(now_utc()))))
+    return "\n".join([
+        f"Mode: {get_mode(db)}{'  (PAUSED)' if is_paused(db) else ''}",
+        f"Posted today: {len(posted)}/{config.MAX_POSTS_PER_DAY}",
+        f"Awaiting your tap: {c.get('pending_review', 0)}",
+        f"Candidates in queue: {c.get('candidate', 0)} · waiting to be scored: {c.get('new', 0)}",
+        f"Platforms: {', '.join(config.enabled_platforms()) or 'none configured'}",
+        "", "Last runs:"] + runlog.heartbeat_lines(db))
 
 
 def handle_message(db, msg: dict) -> str:
@@ -522,16 +819,17 @@ def handle_message(db, msg: dict) -> str:
         telegram.send_text("Auto mode ON: sensitive or flagged stories are still held for you.")
     elif cmd == "/retract":
         retract(db, parts[1] if len(parts) > 1 else "")
+    elif cmd == "/retry":
+        article = db.get_article(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else None
+        if article and article["status"] in ("failed", "published"):
+            retry_failed(db, article)
+        else:
+            telegram.send_text("Usage: /retry <id>  (a post that failed on at least one platform)")
     elif cmd == "/status":
-        posted = stories(db.list_posted_since(iso(ist_day_start(now_utc()))))
-        telegram.send_text(
-            f"Mode: {get_mode(db)}{'  (PAUSED)' if is_paused(db) else ''}\n"
-            f"Posted today: {len(posted)}/{config.MAX_POSTS_PER_DAY}\n"
-            f"Awaiting review: {len(db.list_by_status('pending_review'))}\n"
-            f"Candidates in queue: {len(db.list_by_status('candidate'))}\n"
-            f"Platforms: {', '.join(config.enabled_platforms()) or 'none configured'}")
+        telegram.send_text(status_text(db))
     elif cmd in ("/start", "/help"):
         telegram.send_text(HELP)
     else:
         return "ignored"
+    runlog.activity()
     return cmd

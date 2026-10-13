@@ -45,6 +45,8 @@
 
 - **Held for your approval, even in auto mode:** sensitive topics; all **Crime & Law** stories; election-silence windows; poll/exit-poll stories; any draft failing the **facts-only** check (invented numbers or names); personal data; loaded/insulting terms.
 - **Cross-source rule:** single-source stories are labelled "Developing" and attributed.
+- **Spotlight stories** (important, from specialist/regional sources not yet carried by national outlets) are max 1 a day, labelled as such, always attributed, never called "exclusive", and held for your approval unless from an official government source.
+- **Freshness:** nothing published more than 48 hours earlier is posted.
 - **Balance:** no more than 2 **Politics** posts/day; category and state repeats are penalised; topic-neutral popularity signal; every rule applies identically to every party, religion and community.
 - **Volume:** 8 posts/day max + 1 digest; 2 breaking/day.
 - **Corrections:** `/retract <id>` deletes the Facebook post and tells you which posts to delete by hand on Instagram/Threads (their APIs don't allow it).

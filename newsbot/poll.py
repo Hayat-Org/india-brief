@@ -1,27 +1,36 @@
-"""Every ~5 min: read Telegram taps (Approve/Reject) and owner commands."""
+"""Every ~5 min: read Telegram taps (Approve/Reject/Retry) and owner commands.
+Reports to Telegram only when something happened (or failed), to avoid noise."""
 import traceback
 
-from . import pipeline, telegram
+from . import pipeline, runlog, telegram
 from .db import DB
 
 
 def main() -> None:
-    db = DB()
-    offset = int(db.get_setting("tg_offset", "0") or 0)
+    log = runlog.start("poll", "Telegram actions", quiet_unless_activity=True)
+    db = None
     try:
+        db = DB()
+        offset = int(db.get_setting("tg_offset", "0") or 0)
         for upd in telegram.get_updates(offset):
             try:
                 if "callback_query" in upd:
-                    print("callback:", pipeline.handle_callback(db, upd["callback_query"]))
+                    res = pipeline.handle_callback(db, upd["callback_query"])
+                    log.add(f"Tap handled: {res}")
                 elif "message" in upd:
-                    print("message:", pipeline.handle_message(db, upd["message"]))
+                    res = pipeline.handle_message(db, upd["message"])
+                    log.add(f"Command handled: {res}")
+                log.mark_activity()
             except Exception:
-                telegram.send_text("⚠️ Error handling a Telegram action:\n" + traceback.format_exc()[-1200:])
+                log.error("Error handling a Telegram action:\n" + traceback.format_exc()[-900:])
             offset = upd["update_id"] + 1
             db.set_setting("tg_offset", str(offset))  # save progress so nothing runs twice
     except Exception:
-        print(traceback.format_exc())
+        log.crash()
         raise
+    finally:
+        # The poll heartbeat is only saved when something happened, to avoid a database write every 5 minutes.
+        log.finish(db if log.activity else None)
 
 
 if __name__ == "__main__":

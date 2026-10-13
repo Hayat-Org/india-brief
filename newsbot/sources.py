@@ -3,6 +3,9 @@
   news       mainstream outlets
   factcheck  fact-checkers (their verdicts are cited, never overridden by the AI)
   state_gn   Google News search scoped to one state/UT (broad regional coverage)
+  niche      specialist / regional / independent outlets (environment, rural, data, courts,
+             North-East, J&K, civic). Stories only these carry, and no big national outlet has
+             picked up yet, can become a "Spotlight" post.
 
 Feed URLs can change; `python -m newsbot.health weekly` reports dead feeds on Telegram.
 """
@@ -15,24 +18,26 @@ class Feed:
     url: str
     kind: str = "news"
     state: str = ""
+    site: str = ""  # domain used for a Google News "site:" fallback when the direct feed is blocked
 
 
 NATIONAL_FEEDS = [
-    Feed("PIB", "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3", "govt"),
+    Feed("PIB", "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3", "govt", site="pib.gov.in"),
+    Feed("RBI", "https://www.rbi.org.in/pressreleases_rss.xml", "govt"),
     Feed("The Hindu", "https://www.thehindu.com/news/national/feeder/default.rss"),
-    Feed("Indian Express", "https://indianexpress.com/section/india/feed/"),
+    Feed("Indian Express", "https://indianexpress.com/section/india/feed/", site="indianexpress.com"),
     Feed("NDTV", "https://feeds.feedburner.com/ndtvnews-india-news"),
     Feed("Times of India", "https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms"),
     Feed("Hindustan Times", "https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml"),
     Feed("India Today", "https://www.indiatoday.in/rss/1206514"),
     Feed("News18", "https://www.news18.com/rss/india.xml"),
-    Feed("The Print", "https://theprint.in/feed/"),
+    Feed("The Print", "https://theprint.in/feed/", site="theprint.in"),
     Feed("Scroll", "https://feeds.feedburner.com/ScrollinArticles.rss"),
     Feed("Mint", "https://www.livemint.com/rss/news"),
-    Feed("Business Standard", "https://www.business-standard.com/rss/home_page_top_stories.rss"),
+    Feed("Business Standard", "https://www.business-standard.com/rss/home_page_top_stories.rss", site="business-standard.com"),
     Feed("Economic Times", "https://economictimes.indiatimes.com/rssfeedstopstories.cms"),
     Feed("Alt News", "https://www.altnews.in/feed/", "factcheck"),
-    Feed("BOOM", "https://www.boomlive.in/feed", "factcheck"),
+    Feed("BOOM", "https://www.boomlive.in/feed", "factcheck", site="boomlive.in"),
     # Topic searches (national coverage beyond headlines)
     Feed("Google News", "https://news.google.com/rss/headlines/section/geo/India?hl=en-IN&gl=IN&ceid=IN:en"),
 ]
@@ -60,11 +65,25 @@ STATES_AND_UTS = [
 
 
 def _gn(query: str) -> str:
+    """Google News search feed. The 'when:' window follows ARTICLE_MAX_AGE_HOURS."""
     from urllib.parse import quote_plus
+    from . import config
+    days = max(1, -(-config.ARTICLE_MAX_AGE_HOURS // 24))
     return (
-        f"https://news.google.com/rss/search?q={quote_plus(query + ' when:1d')}"
+        f"https://news.google.com/rss/search?q={quote_plus(f'{query} when:{days}d')}"
         "&hl=en-IN&gl=IN&ceid=IN:en"
     )
+
+
+def gn_site_url(domain: str) -> str:
+    return _gn(f"site:{domain}")
+
+
+def fallback_feed(feed: Feed):
+    """Google News 'site:' stand-in for a feed that is blocked or down (discovery only)."""
+    if not feed.site:
+        return None
+    return Feed(f"{feed.name} (via Google News)", gn_site_url(feed.site), feed.kind, feed.state)
 
 
 # Publisher-direct regional feeds (preferred over Google News where they exist).
@@ -77,6 +96,31 @@ REGIONAL_FEEDS = [
 ]
 
 
+# Specialist, regional and independent outlets that big national outlets often miss.
+# Direct RSS where it exists (checked), otherwise a Google News "site:" search (discovery only).
+# No partisan outlets: the goal is under-covered *facts*, not under-covered opinions.
+NICHE_FEEDS = [
+    Feed("Mongabay India", "https://india.mongabay.com/feed/", "niche", site="india.mongabay.com"),
+    Feed("Bar & Bench", "https://www.barandbench.com/feed", "niche", site="barandbench.com"),
+    Feed("EastMojo", "https://www.eastmojo.com/feed/", "niche", site="eastmojo.com"),
+    Feed("Northeast Now", "https://nenow.in/feed", "niche", site="nenow.in"),
+    Feed("The Sentinel (Assam)", "https://www.sentinelassam.com/feed", "niche", "Assam", site="sentinelassam.com"),
+    Feed("Kashmir Observer", "https://kashmirobserver.net/feed/", "niche", "Jammu and Kashmir", site="kashmirobserver.net"),
+    Feed("Citizen Matters", "https://citizenmatters.in/feed", "niche", site="citizenmatters.in"),
+    Feed("The Better India", "https://www.thebetterindia.com/feed/", "niche", site="thebetterindia.com"),
+    Feed("Telangana Today", "https://telanganatoday.com/feed", "niche", "Telangana", site="telanganatoday.com"),
+    Feed("IndiaSpend", "https://www.indiaspend.com/feed", "niche", site="indiaspend.com"),
+    Feed("Gaon Connection", "https://www.gaonconnection.com/feed", "niche", site="gaonconnection.com"),
+]
+# Only reachable through Google News site: search (no direct feed checked)
+NICHE_SITE_ONLY = [
+    ("Down To Earth", "downtoearth.org.in", ""),
+    ("The News Minute", "thenewsminute.com", ""),
+    ("LiveLaw", "livelaw.in", ""),
+    ("People's Archive of Rural India", "ruralindiaonline.org", ""),
+]
+
+
 def all_feeds(use_google_news: bool = None) -> list:
     """Google News feeds are discovery-only (headline + source + link). Their terms for
     republication are unclear, so they can be switched off with USE_GOOGLE_NEWS=0."""
@@ -85,7 +129,10 @@ def all_feeds(use_google_news: bool = None) -> list:
         use_google_news = config.USE_GOOGLE_NEWS
     feeds = [f for f in NATIONAL_FEEDS if use_google_news or f.name != "Google News"]
     feeds += REGIONAL_FEEDS
+    feeds += NICHE_FEEDS
     if use_google_news:
+        for name, domain, state in NICHE_SITE_ONLY:
+            feeds.append(Feed(f"{name} (via Google News)", gn_site_url(domain), "niche", state))
         for topic, q in TOPIC_QUERIES.items():
             feeds.append(Feed(f"GN:{topic}", _gn(q), "news"))
         for st in STATES_AND_UTS:

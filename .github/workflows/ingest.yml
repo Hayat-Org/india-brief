@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   ingest:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -40,3 +40,19 @@ jobs:
           MAX_POSTS_PER_DAY: ${{ secrets.MAX_POSTS_PER_DAY }}
           MAX_POLITICS_PER_DAY: ${{ secrets.MAX_POLITICS_PER_DAY }}
           ELECTION_SILENCE: ${{ secrets.ELECTION_SILENCE }}
+          SPOTLIGHT_AUTO: ${{ secrets.SPOTLIGHT_AUTO }}
+          REPORT_LEVEL: ${{ secrets.REPORT_LEVEL }}
+          ARTICLE_MAX_AGE_HOURS: ${{ secrets.ARTICLE_MAX_AGE_HOURS }}
+          MAX_PENDING_REVIEW: ${{ secrets.MAX_PENDING_REVIEW }}
+      - name: Tell me on Telegram if this run crashed
+        if: failure()
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -n "$TG_TOKEN" ] && curl -s -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            --data-urlencode "chat_id=$TG_CHAT" \
+            --data-urlencode "text=❌ GitHub run failed: ${{ github.workflow }}
+          $RUN_URL
+          Open the link, or run the 'Diagnose' workflow for a full check." > /dev/null || true

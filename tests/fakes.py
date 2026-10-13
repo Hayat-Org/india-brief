@@ -30,6 +30,12 @@ class FakeDB:
         return [dict(r) for r in self.rows.values()
                 if r["status"] == "published" and (r.get("posted_at") or "") >= since_iso]
 
+    def status_counts(self, hours=72):
+        counts = {}
+        for r in self.rows.values():
+            counts[r["status"]] = counts.get(r["status"], 0) + 1
+        return counts
+
     def get_setting(self, key, default=""):
         return self.settings.get(key, default)
 

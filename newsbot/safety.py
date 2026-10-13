@@ -31,7 +31,9 @@ _SENSITIVE = [(re.compile(p, re.I), reason) for p, reason in SENSITIVE_PATTERNS]
 LOADED_TERMS = re.compile(
     r"\banti-?national\b|\btraitor\b|\bjihadi\b|\blibtard\b|\burban naxal\b|\bgodi media\b|"
     r"\bbhakt\b|\bpresstitute\b|\bsickular\b|\blove jihad\b|\bpaid media\b|\bgoons\b|"
-    r"\bterrorist sympathi[sz]er\b|\bcockroach|\bparasite",
+    r"\bterrorist sympathi[sz]er\b|\bcockroach|\bparasite|"
+    r"\bexclusive\b|won'?t tell you|don'?t want you to know|media (is )?(hiding|ignoring|silent)|"
+    r"\bcover-?up\b|shocking truth|you won'?t believe",
     re.I,
 )
 

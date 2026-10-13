@@ -85,8 +85,20 @@ DIGEST_MAX_STORIES = _int("DIGEST_MAX_STORIES", 5)
 MIN_SCORE = _float("MIN_SCORE", 5.5)
 BREAKING_SCORE = _float("BREAKING_SCORE", 8.8)
 BREAKING_MIN_SOURCES = _int("BREAKING_MIN_SOURCES", 2)
-MAX_SCORE_PER_RUN = _int("MAX_SCORE_PER_RUN", 25)
-ARTICLE_MAX_AGE_HOURS = _int("ARTICLE_MAX_AGE_HOURS", 24)
+MAX_SCORE_PER_RUN = _int("MAX_SCORE_PER_RUN", 80)   # stories scored per hourly run
+SCORE_BATCH_SIZE = _int("SCORE_BATCH_SIZE", 8)       # stories judged per AI call (saves free-tier quota)
+ARTICLE_MAX_AGE_HOURS = _int("ARTICLE_MAX_AGE_HOURS", 48)  # never post anything published longer ago
+
+# Spotlight lane: important stories from specialist/regional/official sources that the big
+# national outlets have not carried yet. Always attributed, never presented as "exclusive".
+SPOTLIGHT_PER_DAY = _int("SPOTLIGHT_PER_DAY", 1)
+SPOTLIGHT_MIN_VALUE = _float("SPOTLIGHT_MIN_VALUE", 6.0)   # (significance + impact) / 2
+SPOTLIGHT_MIN_AGE_HOURS = _int("SPOTLIGHT_MIN_AGE_HOURS", 2)  # give mainstream a chance to pick it up first
+SPOTLIGHT_AUTO = env("SPOTLIGHT_AUTO", "0") == "1"  # 0 = spotlight posts from non-official sources wait for your tap
+
+# Telegram run reports: "full" = a report after every run, "important" = only runs that
+# had errors/warnings or actually posted/queued something.
+REPORT_LEVEL = env("REPORT_LEVEL", "full")
 
 # Election silence / special no-political-post windows, e.g.
 # ELECTION_SILENCE='[["2026-11-01","2026-11-03"]]'  (IST dates, inclusive)

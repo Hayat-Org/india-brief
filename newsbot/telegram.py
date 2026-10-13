@@ -16,10 +16,13 @@ def _api(method: str, **payload):
     return data
 
 
-def send_text(text: str) -> None:
-    for i in range(0, len(text), 3900):
-        _api("sendMessage", chat_id=config.TELEGRAM_CHAT_ID, text=text[i:i + 3900],
-             disable_web_page_preview=True)
+def send_text(text: str, buttons=None) -> None:
+    """Plain-text message(s). `buttons` is an inline keyboard shown on the last chunk."""
+    chunks = [text[i:i + 3900] for i in range(0, len(text), 3900)] or [""]
+    for n, chunk in enumerate(chunks):
+        extra = {"reply_markup": {"inline_keyboard": buttons}} if buttons and n == len(chunks) - 1 else {}
+        _api("sendMessage", chat_id=config.TELEGRAM_CHAT_ID, text=chunk,
+             disable_web_page_preview=True, **extra)
 
 
 def send_review(article: dict, draft: dict, card_url: str, flags: list) -> None:

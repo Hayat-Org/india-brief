@@ -64,7 +64,7 @@ def _gradient(color_top, color_bottom):
 
 
 def render_card(headline: str, category: str, source: str, state: str = "National",
-                developing: bool = False, when: datetime = None) -> bytes:
+                developing: bool = False, spotlight: bool = False, when: datetime = None) -> bytes:
     when = (when or datetime.now(timezone.utc)).astimezone(IST)
     img = _gradient((13, 22, 41), (24, 40, 72))
     d = ImageDraw.Draw(img)
@@ -87,7 +87,9 @@ def render_card(headline: str, category: str, source: str, state: str = "Nationa
         d.text((x + 22, y + 11), label, font=f, fill=txt)
         x += tw + 44 + 18
 
-    if developing:
+    if spotlight:
+        d.text((pad, y + 90), "SPOTLIGHT · LESS-COVERED STORY", font=_font(28), fill="#2EC4B6")
+    elif developing:
         d.text((pad, y + 90), "DEVELOPING STORY", font=_font(28), fill="#FFB703")
 
     # Headline: shrink until it fits

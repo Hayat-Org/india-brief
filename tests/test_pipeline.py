@@ -27,7 +27,7 @@ def env(monkeypatch):
     monkeypatch.setattr(media, "resolve_url", lambda u: u)
     monkeypatch.setattr(media, "fetch_text", lambda u: "Floods in Assam affected 2,500 people.")
     monkeypatch.setattr(media, "upload_card", lambda b, n: f"https://cards/{n}")
-    monkeypatch.setattr(telegram, "send_text", lambda t: sent["telegram"].append(t))
+    monkeypatch.setattr(telegram, "send_text", lambda t, *a, **k: sent["telegram"].append(t))
     monkeypatch.setattr(telegram, "send_review",
                         lambda a, d, u, f: sent["reviews"].append((a["id"], f)))
     monkeypatch.setattr(telegram, "answer_callback", lambda *a: None)
@@ -51,7 +51,7 @@ def env(monkeypatch):
                 "instagram": "Assam floods: 2,500 people affected, officials said.",
                 "card_headline": "Assam floods affect 2,500 people", "hashtags": ["assamfloods"]}
 
-    monkeypatch.setattr(ai, "score_article", fake_score)
+    monkeypatch.setattr(ai, "score_batch", lambda arts: {a["id"]: fake_score(a) for a in arts})
     monkeypatch.setattr(ai, "write_post", fake_draft)
     return sent
 
@@ -62,7 +62,7 @@ def seed(db):
         entry("Assam floods: 2,500 people affected", "https://b/1", "NDTV"),
         entry("Fire breaks out in Mumbai building", "https://c/1", "HT"),
         entry("Aries horoscope today", "https://d/1", "TOI"),
-        entry("Old story", "https://e/1", "TOI", minutes_ago=60 * 48),
+        entry("Old story", "https://e/1", "TOI", minutes_ago=60 * 50),
     ])
 
 

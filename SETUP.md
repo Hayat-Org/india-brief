@@ -165,6 +165,8 @@ Every evening (~22:10 IST) you'll also get a **Today in short** carousel to appr
 | Health check says token error `code=190` | Token expired or password changed → regenerate (step 9) and update the secret |
 | Instagram `code=9` / `2207042` | Daily API publish limit hit. We stay far below it, so check for repeated manual runs |
 | Instagram "media not found / cannot download image" | The `cards` bucket is not public. Re-run `schema.sql`, or Supabase → Storage → cards → make public |
+| Anything looks wrong | Actions → **Diagnose** → Run workflow. One Telegram message lists every problem with a fix |
+| Instagram health check says `@None` or "IG_USER_ID is wrong" | Put the ID shown in the message into the `IG_USER_ID` secret |
 | Nothing arrives in Telegram | Check `TELEGRAM_CHAT_ID`, and that you pressed Start on the bot |
 | No candidates after ingest | Run ingest again (scoring is capped per run). Check the log for AI errors / keys |
 | Many "feeds returned nothing" | Some publishers change RSS URLs. Send me the list and I'll update `sources.py` |
