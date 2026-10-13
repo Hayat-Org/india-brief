@@ -97,6 +97,8 @@ SPOTLIGHT_MIN_VALUE = _float("SPOTLIGHT_MIN_VALUE", 6.0)   # (significance + imp
 SPOTLIGHT_MIN_AGE_HOURS = _int("SPOTLIGHT_MIN_AGE_HOURS", 2)  # give mainstream a chance to pick it up first
 SPOTLIGHT_AUTO = env("SPOTLIGHT_AUTO", "0") == "1"  # 0 = spotlight posts from non-official sources wait for your tap
 
+POLL_SECONDS = _int("POLL_SECONDS", 240)  # how long each approvals run keeps listening for taps
+
 # Telegram run reports: "full" = a report after every run, "important" = only runs that
 # had errors/warnings or actually posted/queued something.
 REPORT_LEVEL = env("REPORT_LEVEL", "full")

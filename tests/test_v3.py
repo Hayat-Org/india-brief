@@ -226,3 +226,14 @@ def test_sources_list_has_niche_and_fallbacks(monkeypatch):
     feeds = sources.all_feeds()
     assert any(f.kind == "niche" for f in feeds)
     assert sources.fallback_feed(next(f for f in feeds if f.site)) is not None
+
+
+def test_poll_loop_handles_taps_and_saves_offset(env, monkeypatch):
+    from newsbot import poll
+    db = FakeDB()
+    updates = [[{"update_id": 5, "message": {"chat": {"id": 42}, "text": "/status"}}], []]
+    monkeypatch.setattr(telegram, "get_updates", lambda off: updates.pop(0) if updates else [])
+    monkeypatch.setattr(pipeline, "handle_message", lambda d, m: "handled")
+    log = runlog.start("poll", "t", quiet_unless_activity=True)
+    assert poll.handle_updates(db, log, 0) == 6
+    assert db.get_setting("tg_offset") == "6" and log.activity
