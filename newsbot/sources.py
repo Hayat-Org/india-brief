@@ -109,14 +109,14 @@ NICHE_FEEDS = [
     Feed("Citizen Matters", "https://citizenmatters.in/feed", "niche", site="citizenmatters.in"),
     Feed("The Better India", "https://www.thebetterindia.com/feed/", "niche", site="thebetterindia.com"),
     Feed("Telangana Today", "https://telanganatoday.com/feed", "niche", "Telangana", site="telanganatoday.com"),
-    Feed("IndiaSpend", "https://www.indiaspend.com/feed", "niche", site="indiaspend.com"),
-    Feed("Gaon Connection", "https://www.gaonconnection.com/feed", "niche", site="gaonconnection.com"),
+    Feed("Gaon Connection", "https://en.gaonconnection.com/feed/", "niche", site="en.gaonconnection.com"),
 ]
 # Only reachable through Google News site: search (no direct feed checked)
 NICHE_SITE_ONLY = [
     ("Down To Earth", "downtoearth.org.in", ""),
     ("The News Minute", "thenewsminute.com", ""),
     ("LiveLaw", "livelaw.in", ""),
+    ("IndiaSpend", "indiaspend.com", ""),
     ("People's Archive of Rural India", "ruralindiaonline.org", ""),
 ]
 

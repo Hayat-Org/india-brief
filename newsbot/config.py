@@ -41,9 +41,9 @@ SUPABASE_BUCKET = env("SUPABASE_BUCKET", "cards")
 GROQ_API_KEY = env("GROQ_API_KEY")
 GEMINI_API_KEY = env("GEMINI_API_KEY")
 # Each setting is a comma-separated list tried in order, so one retired model never stops the bot.
-GROQ_FAST_MODELS = _list("GROQ_FAST_MODEL", "openai/gpt-oss-20b,llama-3.1-8b-instant")
-GROQ_QUALITY_MODELS = _list("GROQ_QUALITY_MODEL", "openai/gpt-oss-120b,llama-3.3-70b-versatile")
-GEMINI_MODELS = _list("GEMINI_MODELS", "gemini-3.5-flash-lite,gemini-3.8-flash,gemini-3.6-flash,gemini-2.5-flash")
+GROQ_FAST_MODELS = _list("GROQ_FAST_MODEL", "openai/gpt-oss-20b")
+GROQ_QUALITY_MODELS = _list("GROQ_QUALITY_MODEL", "openai/gpt-oss-120b")
+GEMINI_MODELS = _list("GEMINI_MODELS", "gemini-3.6-flash,gemini-3.8-flash,gemini-3.5-flash-lite")
 
 # --- Telegram -------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN")
