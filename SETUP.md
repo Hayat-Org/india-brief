@@ -153,7 +153,7 @@ Every evening (~22:10 IST) you'll also get a **Today in short** carousel to appr
 - GitHub disables schedules after 60 days of repo inactivity. The keepalive job prevents that, and the daily Telegram summary is your alarm: **if it stops arriving, open the Actions tab.**
 - Google News links are unwrapped on a best-effort basis; a few may fail and fall back to the Google link.
 - Instagram captions can't contain clickable links; the caption points readers to the original publisher.
-- Model names and Meta API versions change. If the AI or Meta calls start failing after a deprecation, set `GROQ_QUALITY_MODEL`, `GEMINI_MODELS` or `GRAPH_VERSION` as secrets, or paste me the error.
+- Model names and Meta API versions change. If the AI or Meta calls start failing after a deprecation, set `GROQ_FAST_MODEL`, `GROQ_QUALITY_MODEL` or `GEMINI_MODELS` (comma-separated lists, tried in order) or `GRAPH_VERSION` as secrets, or paste me the error.
 - You are the publisher. The safeguards reduce risk but cannot remove it, and this is not legal advice. Keep reviewing for the first weeks and handle corrections quickly.
 
 ---

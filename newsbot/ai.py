@@ -13,6 +13,7 @@ TIMEOUT = 60
 
 # What happened during this run: {"ok": Counter, "fail": Counter} keyed by "provider:model".
 USAGE = {"ok": Counter(), "fail": Counter()}
+DEAD = set()  # (provider, model) that returned 404: retired or not available to this key
 
 
 def usage_summary() -> str:
@@ -74,10 +75,15 @@ def _gemini(model: str, system: str, user: str) -> str:
 def _chain(quality: str) -> list:
     groq = []
     if config.GROQ_API_KEY:
-        fast, good = config.GROQ_FAST_MODEL, config.GROQ_QUALITY_MODEL
-        groq = [("groq", m) for m in ([fast, good] if quality == "fast" else [good, fast])]
+        fast, good = config.GROQ_FAST_MODELS, config.GROQ_QUALITY_MODELS
+        groq = [("groq", m) for m in (fast + good if quality == "fast" else good + fast)]
     gem = [("gemini", m) for m in config.GEMINI_MODELS] if config.GEMINI_API_KEY else []
-    return groq + gem
+    seen, out = set(), []
+    for c in groq + gem:
+        if c not in seen and c not in DEAD:  # DEAD = models that answered 404 earlier in this run
+            seen.add(c)
+            out.append(c)
+    return out
 
 
 def chat_json(system: str, user: str, quality: str = "fast") -> dict:
@@ -91,6 +97,8 @@ def chat_json(system: str, user: str, quality: str = "fast") -> dict:
             return result
         except Exception as ex:  # rate limit, deprecation, bad JSON: try the next model
             USAGE["fail"][f"{provider}:{model}"] += 1
+            if " 404" in str(ex):
+                DEAD.add((provider, model))
             errors.append(f"{provider}:{model}: {str(ex)[:120]}")
             time.sleep(1)
     raise AIError("all models failed: " + " | ".join(errors) if errors else "no AI keys configured")
