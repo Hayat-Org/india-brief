@@ -60,7 +60,7 @@ jobs:
           $RUN_URL
           Open the link, or run the 'Diagnose' workflow for a full check." > /dev/null || true
       - name: Save the error log to a GitHub issue (secrets removed)
-        if: failure() && hashFiles('crash_report.txt') != ''
+        if: always() && hashFiles('crash_report.txt') != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
