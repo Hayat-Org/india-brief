@@ -10,7 +10,7 @@ from email.utils import parsedate_to_datetime
 import requests
 from bs4 import BeautifulSoup
 
-from . import ai, cards, config, dedup, media, meta, runlog, safety, telegram
+from . import ai, cards, config, dedup, media, meta, photos, runlog, safety, telegram
 from . import trends as trendlib
 from .sources import Feed, fallback_feed
 
@@ -67,7 +67,8 @@ def is_paused(db) -> bool:
 
 
 def get_mode(db) -> str:
-    return db.get_setting("mode", config.DEFAULT_MODE)
+    # Key is "mode2": an older "mode" value (from when approval was the default) is deliberately ignored.
+    return db.get_setting("mode2", config.DEFAULT_MODE)
 
 
 def queue_summary(db) -> str:
@@ -412,6 +413,13 @@ def build_texts(draft: dict, a: dict) -> dict:
     instagram = (shorten(draft["instagram"], 1000)
                  + f"\n\nSource: {src}. Read the full story at the original publisher.\n\n"
                  + " ".join(ig_tags))
+    credit = draft.get("photo_credit")
+    if credit:  # licence terms: credit the photographer wherever the photo appears
+        line = f"\n\nRepresentative image. Photo: {credit}"
+        facebook = facebook.replace("\n#India", line + "\n#India", 1) if "\n#India" in facebook else facebook + line
+        instagram = instagram.replace("\n\n#", line + "\n\n#", 1) if "\n\n#" in instagram else instagram + line
+        if len(threads) + len(f"\nPhoto: {credit}") <= 490:
+            threads += f"\nPhoto: {credit}"
     return {"threads": threads[:490], "facebook": facebook, "instagram": instagram[:2100]}
 
 
@@ -431,11 +439,12 @@ def publish_article(db, a: dict, only: list = None) -> str:
         texts = build_texts(draft, a)
         link = (draft.get("link") or a["url"]) if config.ATTACH_LINKS else None
     alt = f"{draft.get('card_headline') or a['title']}. Source: {source_line(a)}"
+    image = draft["slides"][0] if is_digest and draft.get("slides") else a.get("card_url")  # every post carries a picture
     platforms = config.enabled_platforms()
     results = dict(a.get("results") or {}) if only else {}
     steps = {
-        "threads": lambda: meta.post_threads(texts["threads"], link, threads_token(db)),
-        "facebook": lambda: meta.post_facebook(texts["facebook"], link),
+        "threads": lambda: meta.post_threads(texts["threads"], link, threads_token(db), image),
+        "facebook": lambda: meta.post_facebook(texts["facebook"], link, image),
         "instagram": (lambda: meta.post_instagram_carousel(texts["instagram"], draft["slides"],
                                                            draft.get("alts")))
         if is_digest else (lambda: meta.post_instagram(texts["instagram"], a["card_url"], alt)),
@@ -488,6 +497,24 @@ def retry_failed(db, article: dict) -> str:
         telegram.send_text(f"#{article['id']}: nothing to retry (no failed platform).")
         return "nothing"
     return publish_article(db, article, only=todo)
+
+
+CATEGORY_PHOTO_QUERY = {
+    "Government & Policy": "Parliament House New Delhi", "Politics": "Parliament House New Delhi",
+    "Courts": "Supreme Court of India building", "Economy & Business": "Reserve Bank of India building",
+    "Weather & Disaster": "monsoon rain India", "Health": "hospital building India",
+    "Science & Tech": "ISRO launch pad Sriharikota", "Environment": "forest India landscape",
+    "Infrastructure & Transport": "railway station India", "Agriculture": "paddy field India",
+    "Sports": "cricket stadium India", "Education": "university campus India",
+}
+
+
+def fallback_photo_query(a: dict) -> str:
+    """Used when the AI offered no photo keyword: a place for regional stories, else a generic landmark or scene."""
+    state = a.get("state")
+    if state and state != "National":
+        return f"{state} India landscape"
+    return CATEGORY_PHOTO_QUERY.get(a.get("category") or "", "")
 
 
 def process_candidate(db, a: dict, breaking: bool = False) -> str:
@@ -546,14 +573,25 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
     elif developing:
         flags.append("Developing: single outlet so far")
 
+    photo = photos.find_photo(draft.get("photo_query") or fallback_photo_query(a))
+    if photo:
+        draft["photo_credit"], draft["photo_source"] = photo["credit"], photo["source"]
+        runlog.note(f"{tag} → photo from {photo['source']}")
     card = cards.render_card(draft["card_headline"] or a["title"], a.get("category") or "Society",
-                             source_line(a), a.get("state") or "National", developing, spotlight=spotlight)
+                             source_line(a), a.get("state") or "National", developing, spotlight=spotlight,
+                             photo=photo["image"] if photo else None,
+                             photo_credit=photo["credit"] if photo else "")
     card_url = media.upload_card(card, f"{a['id']}-{int(time.time())}.jpg")
 
     update = {"draft": draft, "card_url": card_url, "breaking": breaking,
               "hold_reason": "; ".join(hold) or None}
     merged = {**a, **update}
-    if mode != "auto" or hold:  # anything other than an explicit "auto" means human review
+    if mode == "auto" and hold:
+        # No approval step: anything the safety rules would hold is simply not posted.
+        db.update_article(a["id"], {**update, "status": "discarded"})
+        runlog.note(f"{tag} → not posted, safety rule: {'; '.join(hold)}")
+        return "skipped_safety"
+    if mode != "auto":  # approvals were switched back on with /review
         telegram.send_review(merged, draft, card_url, flags)
         db.update_article(a["id"], {**update, "status": "pending_review",
                                     "review_sent_at": iso(now_utc())})
@@ -604,7 +642,7 @@ def effective_score(a: dict, now: datetime, posted_today: list) -> float:
     return score
 
 
-def plan_slot(db, now: datetime = None) -> dict:
+def plan_slot(db, now: datetime = None, exclude: set = None, used_cats: set = None) -> dict:
     """Decide what this slot should post, and explain the decision.
     Returns {"picked": [...], "notes": [human-readable reasons]}."""
     now = now or now_utc()
@@ -626,7 +664,7 @@ def plan_slot(db, now: datetime = None) -> dict:
         allowed = min(allowed, room)
 
     cands = [a for a in db.list_by_status("candidate")
-             if a.get("combined") is not None and not is_too_old(a, now)]
+             if a.get("combined") is not None and not is_too_old(a, now) and a["id"] not in (exclude or ())]
     if not cands:
         waiting = len(db.list_by_status("new"))
         notes.append(f"⛔ No scored candidates in the queue. {waiting} stories are waiting to be scored by the hourly "
@@ -637,7 +675,7 @@ def plan_slot(db, now: datetime = None) -> dict:
     cands.sort(key=lambda a: effective_score(a, now, posted_today), reverse=True)
     notes.append(f"{len(cands)} candidates; best: {cands[0]['combined']} · {cands[0].get('category')} · "
                  f"{cands[0]['title'][:70]}")
-    picked, used_cats, used_states = [], set(), set()
+    picked, used_cats, used_states = [], set(used_cats or ()), set()
 
     def fits(a) -> bool:
         if a.get("category") in used_cats:
@@ -687,18 +725,29 @@ def run_slot(db, now: datetime = None) -> dict:
     expired = expire_old(db, now)
     if expired:
         runlog.note(f"Cleaned up {expired} expired items")
-    plan = plan_slot(db, now)
-    for n in plan["notes"]:
-        runlog.note(n)
-    picked = plan["picked"]
-    if picked:
+    outcomes, tried, slot_cats = [], set(), set()
+    for round_no in range(1, 5):
+        # A story the safety rules skip (or whose drafting failed) is replaced by the next best one.
+        plan = plan_slot(db, now, exclude=tried, used_cats=slot_cats)
+        if round_no == 1:
+            for n in plan["notes"]:
+                runlog.note(n)
+        posted_now = sum(1 for o in outcomes if o in ("published", "sent_for_review"))
+        picked = plan["picked"][: max(0, config.MAX_POSTS_PER_SLOT - posted_now)]
+        if not picked:
+            if not outcomes:
+                runlog.note("Result: nothing was posted this slot (reason above).")
+            break
         runlog.note(f"Selected {len(picked)} for this slot:")
         for a in picked:
+            tried.add(a["id"])
             runlog.note(f"  #{a['id']} · {a['combined']} · {a.get('category')} · {a.get('state')}"
                         f"{' · SPOTLIGHT' if a.get('spotlight') else ''}\n    {a['title'][:90]}")
-    else:
-        runlog.note("Result: nothing was posted or sent this slot (reason above).")
-    outcomes = [process_candidate(db, a) for a in picked]
+            outcomes.append(process_candidate(db, a))
+            if outcomes[-1] in ("published", "sent_for_review"):
+                slot_cats.add(a.get("category"))  # one story per topic in a slot
+        if sum(1 for o in outcomes if o in ("published", "sent_for_review")) >= config.MAX_POSTS_PER_SLOT:
+            break
     return {"processed": len(outcomes), "outcomes": outcomes}
 
 
@@ -788,7 +837,7 @@ def retract(db, raw_id: str) -> None:
 HELP = ("Commands:\n/status  queue, today's posts and when each job last ran\n/pause  stop all posting\n/resume  resume\n"
         "/retry <id>  retry the platforms that failed for a post\n"
         "/retract <id>  take down a published post (deletes on Facebook)\n"
-        "/review  approve every post here first\n/auto  auto-post non-sensitive stories")
+        "/review  approve every post here first\n/auto  post automatically (default); risky stories are skipped")
 
 
 def status_text(db) -> str:
@@ -815,11 +864,12 @@ def handle_message(db, msg: dict) -> str:
         db.set_setting("paused", "0")
         telegram.send_text("▶️ Resumed.")
     elif cmd == "/review":
-        db.set_setting("mode", "review")
-        telegram.send_text("Review mode ON: every post waits for your approval.")
+        db.set_setting("mode2", "review")
+        telegram.send_text("Review mode ON: every post waits for your approval. Send /auto to post without approval.")
     elif cmd == "/auto":
-        db.set_setting("mode", "auto")
-        telegram.send_text("Auto mode ON: sensitive or flagged stories are still held for you.")
+        db.set_setting("mode2", "auto")
+        telegram.send_text("Auto mode ON: clean stories post by themselves. Stories that trip a safety rule "
+                           "(sensitive topic, crime, election silence, facts check) are skipped, never posted.")
     elif cmd == "/retract":
         retract(db, parts[1] if len(parts) > 1 else "")
     elif cmd == "/retry":

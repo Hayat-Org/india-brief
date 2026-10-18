@@ -29,7 +29,7 @@ Monitors ~65 Indian news sources (national outlets, PIB, fact-checkers, and Goog
  │  draft per platform ─► FACTS-ONLY check ─► sensitive / election gate        │
  │  ─► branded 1080x1350 card ─► upload to public bucket                       │
  │                         │                                                   │
- │        review mode, or anything flagged ─► Telegram: ✅ Approve / ❌ Reject │
+ │        review mode (optional /review) ─► Telegram: ✅ Approve / ❌ Reject; auto mode: risky stories skipped │
  │        auto mode and clean            ─► publish immediately                │
  └─────────────────────────┬───────────────────────────────────────────────────┘
                            ▼
@@ -65,7 +65,16 @@ Monitors ~65 Indian news sources (national outlets, PIB, fact-checkers, and Goog
 
 ## Tuning (all optional GitHub Secrets)
 
-`W_SIGNIFICANCE` (0.35) · `W_IMPACT` (0.30) · `W_INTEREST` (0.35) · `TREND_BONUS` · `MAX_POLITICS_PER_DAY` (2) · `USE_GOOGLE_NEWS` (1) · `ATTACH_LINKS` (1) · `MAX_POSTS_PER_DAY` (8) · `MAX_POSTS_PER_SLOT` (2) · `MAX_BREAKING_PER_DAY` (2) · `MIN_SCORE` (5.5) · `BREAKING_SCORE` (8.8) · `REVIEW_EXPIRY_HOURS` (10) · `ELECTION_SILENCE` · `ARTICLE_MAX_AGE_HOURS` (48) · `SPOTLIGHT_PER_DAY` (1) · `SPOTLIGHT_MIN_VALUE` (6.0) · `SPOTLIGHT_AUTO` (0) · `REPORT_LEVEL` (`full` or `important`) · `SCORE_BATCH_SIZE` (8) · `DRY_RUN=1` (log instead of posting)
+`W_SIGNIFICANCE` (0.35) · `W_IMPACT` (0.30) · `W_INTEREST` (0.35) · `TREND_BONUS` · `MAX_POLITICS_PER_DAY` (2) · `USE_GOOGLE_NEWS` (1) · `ATTACH_LINKS` (1) · `MAX_POSTS_PER_DAY` (8) · `MAX_POSTS_PER_SLOT` (2) · `MAX_BREAKING_PER_DAY` (2) · `MIN_SCORE` (5.5) · `BREAKING_SCORE` (8.8) · `REVIEW_EXPIRY_HOURS` (10) · `ELECTION_SILENCE` · `ARTICLE_MAX_AGE_HOURS` (48) · `SPOTLIGHT_PER_DAY` (1) · `SPOTLIGHT_MIN_VALUE` (6.0) · `SPOTLIGHT_AUTO` (0) · `REPORT_LEVEL` (`full` or `important`) · `SCORE_BATCH_SIZE` (8) · `USE_PHOTOS` (1) · `PEXELS_API_KEY` · `POLL_SECONDS` (240) · `DRY_RUN=1` (log instead of posting)
+
+## Posting without approval, and photos
+
+- **Auto mode is the default.** Clean stories are drafted, checked and posted by themselves. A story that trips a safety rule (sensitive topic, crime/legal, election silence, failed facts-check) is **skipped, never posted**; the slot report says which story was skipped and why, and the next best story takes its place. `/review` turns approvals back on, `/auto` turns them off.
+- **Every post has a picture.** Instagram, Facebook and Threads all post an image. The card is our own design. When a copyright-safe photo is found for the place or scene, it becomes the card background:
+  1. Wikimedia Commons, only CC0, public domain or CC BY (credit required, no ShareAlike/NoDerivs/NonCommercial, nothing marked non-free or restricted);
+  2. Pexels (free licence), only if you add the optional `PEXELS_API_KEY` secret;
+  3. otherwise our plain designed card.
+- Photos are searched by place or scene only, never a person, are labelled "Representative image" with the credit on the card and in every caption. Publisher photos are never copied. `USE_PHOTOS=0` turns photos off.
 
 ## Reports and diagnosis
 

@@ -63,14 +63,14 @@ def test_politics_cap(env, monkeypatch):
     assert sum(1 for a in picked if a["category"] == "Politics") <= config.MAX_POLITICS_PER_DAY
 
 
-def test_crime_stories_are_held_even_in_auto(env):
+def test_crime_stories_are_skipped_in_auto(env):
     db = FakeDB()
-    db.set_setting("mode", "auto")
+    db.set_setting("mode2", "auto")
     row = db.insert_article({"url": "c1", "title": "Floods in Assam affected", "title_norm": "x",
                              "snippet": "Floods in Assam affected 2,500 people.", "source": "NDTV",
                              "source_kind": "news", "status": "candidate", "combined": 7,
                              "category": "Crime & Law", "state": "Assam", "sources": [{"name": "NDTV", "url": "c1"}]})
-    assert pipeline.process_candidate(db, db.get_article(row["id"])) == "sent_for_review"
+    assert pipeline.process_candidate(db, db.get_article(row["id"])) == "skipped_safety"
     assert env["posts"] == []
 
 
@@ -106,6 +106,7 @@ def _published(db, n, **kw):
 
 def test_digest_review_then_publish(env):
     db = _published(FakeDB(), 4)
+    db.set_setting("mode2", "review")
     assert digest.run_digest(db) == "sent_for_review"
     assert len(env["reviews"]) == 1
     assert digest.run_digest(db) == "exists"          # only one digest per day
@@ -120,7 +121,7 @@ def test_digest_review_then_publish(env):
 def test_digest_needs_enough_stories_and_does_not_use_daily_cap(env, monkeypatch):
     assert digest.run_digest(_published(FakeDB(), 2)) == "too_few"
     db = _published(FakeDB(), 4)
-    db.set_setting("mode", "auto")
+    db.set_setting("mode2", "auto")
     digest.run_digest(db)
     posted = db.list_posted_since(pipeline.iso(pipeline.ist_day_start(pipeline.now_utc())))
     assert len(posted) == 5 and len(pipeline.stories(posted)) == 4  # digest excluded from caps
@@ -154,7 +155,7 @@ def test_empty_env_value_means_default(monkeypatch):
 
 def test_unknown_mode_never_autoposts(env):
     db = FakeDB()
-    db.set_setting("mode", "")          # blank or garbage must behave like review mode
+    db.set_setting("mode2", "")          # blank or garbage must behave like review mode
     row = db.insert_article({"url": "m1", "title": "Floods in Assam affected", "title_norm": "x",
                              "snippet": "Floods in Assam affected 2,500 people.", "source": "NDTV",
                              "source_kind": "news", "status": "candidate", "combined": 7,

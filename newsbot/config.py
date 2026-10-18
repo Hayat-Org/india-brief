@@ -60,7 +60,7 @@ IG_TOKEN = env("IG_TOKEN") or FB_PAGE_TOKEN
 
 # --- Behaviour ------------------------------------------------------------
 DRY_RUN = env("DRY_RUN") == "1"          # log instead of calling social APIs
-DEFAULT_MODE = env("DEFAULT_MODE", "review")  # review = approve on Telegram, auto = publish
+DEFAULT_MODE = env("DEFAULT_MODE", "auto")  # auto = post by itself (risky stories skipped), review = approve on Telegram
 
 MAX_POSTS_PER_DAY = _int("MAX_POSTS_PER_DAY", 8)
 MAX_POSTS_PER_SLOT = _int("MAX_POSTS_PER_SLOT", 2)
@@ -95,9 +95,13 @@ ARTICLE_MAX_AGE_HOURS = _int("ARTICLE_MAX_AGE_HOURS", 48)  # never post anything
 SPOTLIGHT_PER_DAY = _int("SPOTLIGHT_PER_DAY", 1)
 SPOTLIGHT_MIN_VALUE = _float("SPOTLIGHT_MIN_VALUE", 6.0)   # (significance + impact) / 2
 SPOTLIGHT_MIN_AGE_HOURS = _int("SPOTLIGHT_MIN_AGE_HOURS", 2)  # give mainstream a chance to pick it up first
-SPOTLIGHT_AUTO = env("SPOTLIGHT_AUTO", "0") == "1"  # 0 = spotlight posts from non-official sources wait for your tap
+SPOTLIGHT_AUTO = env("SPOTLIGHT_AUTO", "1") == "1"  # 0 = Spotlight posts from non-official sources are skipped (or reviewed)
 
 POLL_SECONDS = _int("POLL_SECONDS", 240)  # how long each approvals run keeps listening for taps
+
+# Photos: copyright-safe images only (Wikimedia Commons CC0/PD/CC BY, optional Pexels). See photos.py.
+USE_PHOTOS = env("USE_PHOTOS", "1") == "1"
+PEXELS_API_KEY = env("PEXELS_API_KEY")
 
 # Telegram run reports: "full" = a report after every run, "important" = only runs that
 # had errors/warnings or actually posted/queued something.

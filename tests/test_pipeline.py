@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from newsbot import ai, cards, config, media, meta, pipeline, telegram
+from newsbot import ai, cards, config, media, meta, photos, pipeline, telegram
 from newsbot.pipeline import Entry
 from tests.fakes import FakeDB
 
@@ -32,8 +32,8 @@ def env(monkeypatch):
                         lambda a, d, u, f: sent["reviews"].append((a["id"], f)))
     monkeypatch.setattr(telegram, "answer_callback", lambda *a: None)
     monkeypatch.setattr(telegram, "clear_buttons", lambda *a: None)
-    monkeypatch.setattr(meta, "post_threads", lambda t, l, k: sent["posts"].append("threads") or "t-1")
-    monkeypatch.setattr(meta, "post_facebook", lambda t, l=None: sent["posts"].append("facebook") or "f-1")
+    monkeypatch.setattr(meta, "post_threads", lambda t, l, k, image_url=None: sent["posts"].append("threads") or "t-1")
+    monkeypatch.setattr(meta, "post_facebook", lambda t, l=None, image_url=None: sent["posts"].append("facebook") or "f-1")
     monkeypatch.setattr(meta, "post_instagram", lambda c, u, alt="": sent["posts"].append("instagram") or "i-1")
     monkeypatch.setattr(meta, "post_instagram_carousel",
                         lambda c, urls, alts=None: sent["posts"].append("instagram-carousel") or "i-2")
@@ -53,6 +53,7 @@ def env(monkeypatch):
 
     monkeypatch.setattr(ai, "score_batch", lambda arts: {a["id"]: fake_score(a) for a in arts})
     monkeypatch.setattr(ai, "write_post", fake_draft)
+    monkeypatch.setattr(photos, "find_photo", lambda q: None)  # no network in tests
     return sent
 
 
@@ -86,6 +87,7 @@ def test_same_outlet_does_not_inflate_corroboration(env):
 
 def test_scoring_and_review_mode_flow(env):
     db = FakeDB()
+    db.set_setting("mode2", "review")
     seed(db)
     assert pipeline.score_pending(db)["candidates"] == 2
     out = pipeline.run_slot(db)
@@ -102,6 +104,7 @@ def test_scoring_and_review_mode_flow(env):
 
 def test_callback_from_stranger_is_ignored(env):
     db = FakeDB()
+    db.set_setting("mode2", "review")
     seed(db)
     pipeline.score_pending(db)
     pipeline.run_slot(db)
@@ -113,6 +116,7 @@ def test_callback_from_stranger_is_ignored(env):
 
 def test_reject(env):
     db = FakeDB()
+    db.set_setting("mode2", "review")
     seed(db)
     pipeline.score_pending(db)
     pipeline.run_slot(db)
@@ -122,9 +126,9 @@ def test_reject(env):
     assert env["posts"] == []
 
 
-def test_auto_mode_posts_clean_story_but_holds_sensitive(env):
+def test_auto_mode_posts_clean_story_but_skips_sensitive(env):
     db = FakeDB()
-    db.set_setting("mode", "auto")
+    db.set_setting("mode2", "auto")
     seed(db)
     pipeline.score_pending(db)
     flood = next(r for r in db.rows.values() if "Assam" in r["title"])
@@ -134,26 +138,27 @@ def test_auto_mode_posts_clean_story_but_holds_sensitive(env):
     env["posts"].clear()
     fire = next(r for r in db.rows.values() if "Mumbai" in r["title"])
     db.update_article(fire["id"], {"sensitive": True, "sensitive_reason": "violence"})
-    assert pipeline.process_candidate(db, db.get_article(fire["id"])) == "sent_for_review"
+    assert pipeline.process_candidate(db, db.get_article(fire["id"])) == "skipped_safety"
+    assert db.get_article(fire["id"])["status"] == "discarded"
     assert env["posts"] == []
 
 
-def test_fact_issue_forces_review_even_in_auto(env, monkeypatch):
+def test_fact_issue_is_skipped_even_in_auto(env, monkeypatch):
     db = FakeDB()
-    db.set_setting("mode", "auto")
+    db.set_setting("mode2", "auto")
     seed(db)
     pipeline.score_pending(db)
     monkeypatch.setattr(ai, "write_post", lambda a, b, d: {
         "threads": "Floods hit 9,000 people.", "facebook": "Floods hit 9,000 people.",
         "instagram": "Floods hit 9,000 people.", "card_headline": "Floods hit 9,000", "hashtags": []})
     flood = next(r for r in db.rows.values() if "Assam" in r["title"])
-    assert pipeline.process_candidate(db, db.get_article(flood["id"])) == "sent_for_review"
+    assert pipeline.process_candidate(db, db.get_article(flood["id"])) == "skipped_safety"
     assert env["posts"] == []
 
 
 def test_breaking_needs_two_sources_and_respects_cap(env):
     db = FakeDB()
-    db.set_setting("mode", "auto")
+    db.set_setting("mode2", "auto")
     seed(db)
     pipeline.score_pending(db)
     out = pipeline.breaking_pass(db)
@@ -172,7 +177,7 @@ def test_pause_stops_everything(env):
 
 def test_daily_cap(env, monkeypatch):
     db = FakeDB()
-    db.set_setting("mode", "auto")
+    db.set_setting("mode2", "auto")
     monkeypatch.setattr(config, "MAX_POSTS_PER_DAY", 0)
     seed(db)
     pipeline.score_pending(db)
@@ -183,7 +188,7 @@ def test_owner_commands(env):
     db = FakeDB()
     msg = lambda t: {"chat": {"id": 42}, "text": t}
     pipeline.handle_message(db, msg("/auto"))
-    assert db.get_setting("mode") == "auto"
+    assert db.get_setting("mode2") == "auto"
     pipeline.handle_message(db, msg("/pause"))
     assert pipeline.is_paused(db)
     assert pipeline.handle_message(db, {"chat": {"id": 7}, "text": "/resume"}) == "ignored"

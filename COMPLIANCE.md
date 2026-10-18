@@ -43,7 +43,9 @@
 
 ## 3. What the system enforces automatically
 
-- **Held for your approval, even in auto mode:** sensitive topics; all **Crime & Law** stories; election-silence windows; poll/exit-poll stories; any draft failing the **facts-only** check (invented numbers or names); personal data; loaded/insulting terms.
+- **Photos:** only Wikimedia Commons files under CC0, public domain or plain CC BY, and optionally Pexels. Never a publisher's own photograph, never ShareAlike/NonCommercial/NoDerivs files, nothing marked non-free or restricted, and no photo searched by a person's name. Every photo is labelled "Representative image" and credited on the card and in the caption (the CC BY attribution requirement). Re-check the licence on the Commons page if a complaint arrives; delete the post and the photo is gone from our side.
+
+- **Skipped (never posted) when approval is off, which is the default:** sensitive topics; all **Crime & Law** stories; election-silence windows; poll/exit-poll stories; any draft failing the **facts-only** check (invented numbers or names); personal data; loaded/insulting terms.
 - **Cross-source rule:** single-source stories are labelled "Developing" and attributed.
 - **Spotlight stories** (important, from specialist/regional sources not yet carried by national outlets) are max 1 a day, labelled as such, always attributed, never called "exclusive", and held for your approval unless from an official government source.
 - **Freshness:** nothing published more than 48 hours earlier is posted.

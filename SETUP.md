@@ -95,6 +95,9 @@ Open the Threads app and sign in with the Instagram account. Set the bio.
 
 ---
 
+### Optional: Pexels key (more photo choice)
+Free. Go to pexels.com/api, sign up, and request an API key (instant). Add it as the GitHub secret `PEXELS_API_KEY`. Without it, photos come from Wikimedia Commons only.
+
 ## 2. GitHub Secrets
 
 Repo → **Settings → Secrets and variables → Actions → New repository secret**. Add each of these (names must match exactly):
@@ -117,7 +120,7 @@ You can go live one platform at a time. Any platform whose secrets are missing i
 
 ---
 
-## 3. First run (in review mode)
+## 3. First run (auto mode)
 
 1. Repo → **Actions** tab → enable workflows if asked.
 2. Run **Health checks** manually with mode `weekly`. Telegram should report each platform token as ✅ and any dead feeds.
@@ -126,7 +129,7 @@ You can go live one platform at a time. Any platform whose secrets are missing i
 5. Tap Approve. The **Telegram approvals** job runs every ~5 minutes (GitHub can delay it to 10-15), then posts to all three platforms and reports back.
 6. Look at the posts on the real accounts. Tell me anything that reads off: tone, length, wrong categories.
 
-The system starts in **review mode**: nothing posts without your tap. After about two weeks of clean approvals, send `/auto` to your bot. From then on:
+The system now posts by itself (auto mode). To go back to approving every post first, send `/review` to your bot. In auto mode:
 - clean stories post by themselves,
 - sensitive, flagged or unverified-looking stories are **still held for you**.
 

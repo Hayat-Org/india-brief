@@ -44,7 +44,7 @@ def check_database(log, db) -> None:
             log.error(f"Database problem: {msg[:240]}")
         return
     try:
-        db.get_setting("mode", "")
+        db.get_setting("mode2", "")
     except Exception as ex:
         log.error(f"'settings' table problem: {str(ex)[:200]}")
     try:

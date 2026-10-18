@@ -1,4 +1,4 @@
-"""Branded text cards (1080x1350, Instagram 4:5). Our own design, so no photo-licensing risk."""
+"""Branded cards (1080x1350, Instagram 4:5). Our own design; a background photo is used only when\nphotos.py found one with a safe licence, and it is always credited on the card."""
 import io
 import os
 from datetime import datetime, timedelta, timezone
@@ -63,10 +63,27 @@ def _gradient(color_top, color_bottom):
     return img
 
 
+def _photo_background(photo):
+    """Cover-crop the photo to the card size and darken it so white text stays readable."""
+    pw, ph = photo.size
+    scale = max(W / pw, H / ph)
+    photo = photo.resize((int(pw * scale) + 1, int(ph * scale) + 1), Image.LANCZOS)
+    left, top = (photo.width - W) // 2, (photo.height - H) // 2
+    base = photo.crop((left, top, left + W, top + H)).convert("RGBA")
+    shade = Image.new("RGBA", (W, H))
+    px = shade.load()
+    for y in range(H):
+        alpha = int(255 * (0.55 + 0.38 * (y / (H - 1))))  # darker towards the text at the bottom
+        for x in range(W):
+            px[x, y] = (8, 14, 28, alpha)
+    return Image.alpha_composite(base, shade).convert("RGB")
+
+
 def render_card(headline: str, category: str, source: str, state: str = "National",
-                developing: bool = False, spotlight: bool = False, when: datetime = None) -> bytes:
+                developing: bool = False, spotlight: bool = False, when: datetime = None,
+                photo=None, photo_credit: str = "") -> bytes:
     when = (when or datetime.now(timezone.utc)).astimezone(IST)
-    img = _gradient((13, 22, 41), (24, 40, 72))
+    img = _photo_background(photo) if photo is not None else _gradient((13, 22, 41), (24, 40, 72))
     d = ImageDraw.Draw(img)
     pad = 80
     accent = CATEGORY_COLORS.get(category, "#3A86FF")
@@ -113,6 +130,12 @@ def render_card(headline: str, category: str, source: str, state: str = "Nationa
            fill="#9FB3D1")
     d.text((pad, 1275), config.BRAND_HANDLE, font=_font(30), fill=accent)
     d.text((W - pad, 1277), "AI-assisted summary", font=_font(26, False), fill="#7F93B5", anchor="ra")
+    if photo is not None:
+        credit = f"Representative image · Photo: {photo_credit}"
+        f = _font(22, False)
+        while d.textlength(credit, font=f) > W - 2 * pad and len(credit) > 30:
+            credit = credit[:-4] + "…"
+        d.text((pad, 1318), credit, font=f, fill="#C5D2E8")
 
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=88, optimize=True)

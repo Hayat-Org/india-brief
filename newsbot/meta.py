@@ -28,10 +28,13 @@ def _check(r: requests.Response, what: str) -> dict:
 
 
 # --- Threads ----------------------------------------------------------------
-def post_threads(text: str, link, token: str) -> str:
-    data = {"media_type": "TEXT", "text": text, "access_token": token}
-    if link:
-        data["link_attachment"] = link
+def post_threads(text: str, link, token: str, image_url: str = None) -> str:
+    if image_url:  # a photo post: Threads cannot also carry a link preview
+        data = {"media_type": "IMAGE", "image_url": image_url, "text": text, "access_token": token}
+    else:
+        data = {"media_type": "TEXT", "text": text, "access_token": token}
+        if link:
+            data["link_attachment"] = link
     r = requests.post(f"{THREADS}/{config.THREADS_USER_ID}/threads", timeout=30, data=data)
     creation_id = _check(r, "threads container")["id"]
     time.sleep(5)
@@ -49,7 +52,13 @@ def refresh_threads_token(token: str) -> dict:
 
 
 # --- Facebook Page ------------------------------------------------------------
-def post_facebook(text: str, link=None) -> str:
+def post_facebook(text: str, link=None, image_url: str = None) -> str:
+    if image_url:  # photo post; the source link goes inside the caption
+        caption = text + (f"\n\nRead more: {link}" if link else "")
+        r = requests.post(f"{GRAPH}/{config.FB_PAGE_ID}/photos", timeout=60, data={
+            "url": image_url, "caption": caption, "published": "true", "access_token": config.FB_PAGE_TOKEN})
+        d = _check(r, "facebook photo")
+        return d.get("post_id") or d["id"]
     data = {"message": text, "access_token": config.FB_PAGE_TOKEN}
     if link:
         data["link"] = link
