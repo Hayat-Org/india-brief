@@ -131,7 +131,7 @@ You can go live one platform at a time. Any platform whose secrets are missing i
 
 The system now posts by itself (auto mode). To go back to approving every post first, send `/review` to your bot. In auto mode:
 - clean stories post by themselves,
-- sensitive, flagged or unverified-looking stories are **still held for you**.
+- sensitive, flagged or unverified-looking stories are **skipped, never posted**.
 
 Send `/review` any time to go back, `/pause` to stop everything, `/status` to see the queue, and `/retract <id>` to take down a post that turned out wrong.
 
