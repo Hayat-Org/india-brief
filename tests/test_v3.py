@@ -491,3 +491,59 @@ def test_openverse_filters_licence_and_people(monkeypatch):
     monkeypatch.setattr(photos.requests, "get", lambda *a, **k: R())
     hit = photos.openverse("Majuli")
     assert hit["url"] == "u4" and "C. Creator" in hit["credit"] and "CC BY 4.0" in hit["credit"]
+
+
+# ---- tokens --------------------------------------------------------------------------------
+def test_fbtoken_command_saves_permanent_token_and_deletes_message(env, monkeypatch):
+    db = FakeDB()
+    deleted = []
+    monkeypatch.setattr(telegram, "delete_message", lambda c, m: deleted.append((c, m)))
+    monkeypatch.setattr(meta, "exchange_page_token", lambda t: {
+        "page_id": "P1", "page_name": "indiainshort.news", "page_token": "PERMANENT",
+        "ig_id": "17841400000000000", "ig_username": "indiainshort.daily"})
+    monkeypatch.setattr(config, "FB_PAGE_TOKEN", "old")
+    monkeypatch.setattr(config, "IG_TOKEN", "old")
+    monkeypatch.setattr(config, "IG_USER_ID", "wrong")
+    msg = {"chat": {"id": 42}, "message_id": 7, "text": "/fbtoken EAAShortLived123"}
+    assert pipeline.handle_message(db, msg) == "/fbtoken"
+    assert deleted == [(42, 7)]
+    assert db.get_setting("fb_page_token") == "PERMANENT" and db.get_setting("ig_user_id") == "17841400000000000"
+    assert config.FB_PAGE_TOKEN == "PERMANENT" and config.IG_TOKEN == "PERMANENT" and config.IG_USER_ID == "17841400000000000"
+    assert "EAAShortLived123" not in " ".join(env["telegram"])  # the token is never echoed back
+
+
+def test_fbtoken_failure_is_reported_without_secret(env, monkeypatch):
+    db = FakeDB()
+    monkeypatch.setattr(telegram, "delete_message", lambda c, m: None)
+
+    def boom(t):
+        raise meta.PublishError("token exchange: HTTP 400 code=190 access_token=EAAsecret123 bad")
+
+    monkeypatch.setattr(meta, "exchange_page_token", boom)
+    pipeline.handle_message(db, {"chat": {"id": 42}, "message_id": 1, "text": "/fbtoken EAAsecret123"})
+    assert any("Could not connect" in t for t in env["telegram"])
+    assert "EAAsecret123" not in " ".join(env["telegram"])
+
+
+def test_fbtoken_from_stranger_is_ignored(env):
+    db = FakeDB()
+    assert pipeline.handle_message(db, {"chat": {"id": 999}, "message_id": 1, "text": "/fbtoken x"}) == "ignored"
+
+
+def test_threads_posts_to_me_not_to_a_possibly_wrong_id(monkeypatch):
+    urls = []
+
+    class R:
+        status_code = 200
+        text = "{}"
+        def json(self): return {"id": "123"}
+
+    monkeypatch.setattr(meta.requests, "post", lambda url, **k: urls.append(url) or R())
+    monkeypatch.setattr(meta.time, "sleep", lambda s: None)
+    monkeypatch.setattr(config, "THREADS_USER_ID", "999-wrong")
+    meta.post_threads("hi", None, "tok", "https://img/x.jpg")
+    assert all("/me/" in u and "999-wrong" not in u for u in urls) and len(urls) == 2
+
+
+def test_token_error_hint_mentions_fbtoken():
+    assert "/fbtoken" in meta.explain_error("x: HTTP 400 code=190 sub=463 Session has expired")

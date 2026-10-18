@@ -31,6 +31,7 @@ def main() -> None:
     db = None
     try:
         db = DB()
+        pipeline.load_runtime_tokens(db)
         offset = int(db.get_setting("tg_offset", "0") or 0)
         deadline = time.time() + max(0, config.POLL_SECONDS)
         while True:

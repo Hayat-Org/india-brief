@@ -30,6 +30,7 @@ def main() -> None:
     db = None
     try:
         db = DB()
+        pipeline.load_runtime_tokens(db)
         entries, results = stage(log, "Fetching feeds", lambda: pipeline.collect_entries(all_feeds()), ([], []))
         line, warns = feed_report(results)
         log.add(line)

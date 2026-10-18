@@ -35,10 +35,11 @@ def post_threads(text: str, link, token: str, image_url: str = None) -> str:
         data = {"media_type": "TEXT", "text": text, "access_token": token}
         if link:
             data["link_attachment"] = link
-    r = requests.post(f"{THREADS}/{config.THREADS_USER_ID}/threads", timeout=30, data=data)
+    # "me" is the account the token belongs to, so a wrong THREADS_USER_ID secret cannot break posting.
+    r = requests.post(f"{THREADS}/me/threads", timeout=30, data=data)
     creation_id = _check(r, "threads container")["id"]
     time.sleep(5)
-    r = requests.post(f"{THREADS}/{config.THREADS_USER_ID}/threads_publish", timeout=30, data={
+    r = requests.post(f"{THREADS}/me/threads_publish", timeout=30, data={
         "creation_id": creation_id, "access_token": token,
     })
     return _check(r, "threads publish")["id"]
@@ -133,6 +134,43 @@ def post_instagram_carousel(caption: str, image_urls: list, alt_texts: list = No
     return _ig_publish(container)
 
 
+# --- Facebook / Instagram token (permanent Page token) ---------------------------------
+def exchange_page_token(short_token: str) -> dict:
+    """Turn a short-lived user token (from the Graph API Explorer) into a permanent Page token.
+    Needs the FB_APP_ID and FB_APP_SECRET secrets. Returns page id/name/token and the linked Instagram account."""
+    if not (config.FB_APP_ID and config.FB_APP_SECRET):
+        raise PublishError("The secrets FB_APP_ID and FB_APP_SECRET are not set (App settings → Basic in the Meta dashboard).")
+    r = requests.get(f"{GRAPH}/oauth/access_token", timeout=30, params={
+        "grant_type": "fb_exchange_token", "client_id": config.FB_APP_ID,
+        "client_secret": config.FB_APP_SECRET, "fb_exchange_token": short_token})
+    long_user = _check(r, "token exchange")["access_token"]
+    r = requests.get(f"{GRAPH}/me/accounts", timeout=30, params={
+        "access_token": long_user, "fields": "id,name,access_token,instagram_business_account{id,username}"})
+    pages = _check(r, "list pages").get("data") or []
+    if not pages:
+        raise PublishError("No Pages found for this token. When generating it, tick your Page in the permission dialog.")
+    page = next((p for p in pages if p["id"] == config.FB_PAGE_ID), pages[0])
+    ig = page.get("instagram_business_account") or {}
+    return {"page_id": page["id"], "page_name": page.get("name"), "page_token": page["access_token"],
+            "ig_id": ig.get("id"), "ig_username": ig.get("username")}
+
+
+def token_expiry(token: str):
+    """Days until a token expires: None = unknown, 0 = never (needs FB_APP_ID/FB_APP_SECRET)."""
+    if not (config.FB_APP_ID and config.FB_APP_SECRET and token):
+        return None
+    try:
+        r = requests.get(f"{GRAPH}/debug_token", timeout=20, params={
+            "input_token": token, "access_token": f"{config.FB_APP_ID}|{config.FB_APP_SECRET}"})
+        data = _check(r, "debug token").get("data") or {}
+        exp = int(data.get("expires_at") or 0)
+        if not data.get("is_valid", True):
+            return -1
+        return 0 if exp == 0 else max(0.0, (exp - time.time()) / 86400)
+    except Exception:
+        return None
+
+
 # --- Plain-English hints for errors ------------------------------------------------
 def explain_error(message: str) -> str:
     """Turn a Meta/Threads error into a likely cause and fix. These are hints, not certainties."""
@@ -146,8 +184,9 @@ def explain_error(message: str) -> str:
         return ("Facebook wants a security check on the account that owns the Page. Log in at facebook.com "
                 "with that account, complete the check, then tap Retry.")
     if code == "190" or code == "102" or "expired" in low or "invalid oauth" in low:
-        return ("The access token has expired or was invalidated (a password change does this). "
-                "Create a new token (SETUP.md step 9) and update the GitHub secret.")
+        return ("The Facebook/Instagram token has expired or was invalidated (a password change does this). "
+                "Fix: in Meta's Graph API Explorer generate a new user token and send your bot "
+                "/fbtoken <token>; it makes a permanent Page token itself (SETUP.md step 9).")
     if code in ("10", "200", "299", "3") or "permission" in low:
         return ("The token is missing a permission (pages_manage_posts, instagram_content_publish or "
                 "threads_content_publish). Regenerate it with those ticked.")
@@ -199,6 +238,9 @@ def check_tokens(threads_token: str) -> dict:
             r = requests.get(f"{GRAPH}/{config.FB_PAGE_ID}", timeout=20,
                              params={"fields": "name", "access_token": config.FB_PAGE_TOKEN})
             out["facebook"] = "ok (%s)" % _check(r, "facebook page").get("name")
+            days = token_expiry(config.FB_PAGE_TOKEN)
+            if days is not None and 0 < days < 7:
+                out["facebook"] = f"expires in {days:.0f} days. Send /fbtoken <new token> to renew"
         except Exception as ex:
             out["facebook"] = _with_hint(ex)
     if config.IG_USER_ID and config.IG_TOKEN:

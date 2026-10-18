@@ -59,6 +59,7 @@ def main() -> None:
     db = None
     try:
         db = DB()
+        pipeline.load_runtime_tokens(db)
         (weekly if mode == "weekly" else daily)(db, log)
     except Exception:
         log.crash()

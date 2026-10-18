@@ -118,6 +118,7 @@ def main() -> None:
         check_telegram(log)
         if config.SUPABASE_URL and config.SUPABASE_SERVICE_KEY:
             db = DB()
+            pipeline.load_runtime_tokens(db)
             check_database(log, db)
             log.add(pipeline.queue_summary(db))
             log.add("Last runs:")

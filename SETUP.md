@@ -80,12 +80,12 @@ Open the Threads app and sign in with the Instagram account. Set the bio.
 3. Add these capabilities/use cases to the app: **Facebook Login for Business (or Facebook Login)**, **Instagram API with Facebook Login**, and **Access the Threads API**.
 4. Keep the app in **Development mode**. You do **not** need App Review because you are only posting to your own Page and accounts with your own developer role.
 
-**Facebook + Instagram token (permanent Page token):**
-1. **Tools → Graph API Explorer** → select your app → **Generate Access Token**, tick these permissions:
-   `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, `instagram_content_publish`, `business_management`
-   and select your Page when asked.
-2. Copy the short-lived token. On your own computer run `python meta_helper.py` (included). Give it your App ID, App Secret (App settings → Basic) and that token.
-3. It prints `FB_PAGE_ID`, `FB_PAGE_TOKEN`, `IG_USER_ID`. A Page token made from a long-lived user token does not expire.
+**Facebook + Instagram token (permanent Page token), done from Telegram:**
+1. In the app: **App settings → Basic** → copy the **App ID** and **App Secret**. Add them as GitHub secrets `FB_APP_ID` and `FB_APP_SECRET` (one time).
+2. **Tools → Graph API Explorer** → select your app → **Generate Access Token**, tick `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, `instagram_content_publish`, `business_management`, and tick your Page when asked. Copy the token.
+3. Send it to your bot: `/fbtoken <token>`. The bot deletes your message, swaps the token for a **permanent Page token**, finds the linked Instagram account, saves everything in the database and replies with what it connected. The saved token wins over the `FB_PAGE_TOKEN` / `IG_USER_ID` secrets.
+4. Do this again any time a report says the token expired (that happens only if you change your Facebook password or remove the app). The old way (`python meta_helper.py` on your computer) still works too.
+5. Do **not** copy the Page token the Explorer shows you directly: that one dies within hours or days. Always go through `/fbtoken`.
 
 **Threads token:**
 1. In the app, open the **Threads API** use case → add permissions `threads_basic`, `threads_content_publish`.
@@ -111,7 +111,8 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 | `TELEGRAM_BOT_TOKEN` | BotFather |
 | `TELEGRAM_CHAT_ID` | getUpdates (step 5) |
 | `FB_PAGE_ID`, `FB_PAGE_TOKEN`, `IG_USER_ID` | `meta_helper.py` |
-| `THREADS_USER_ID`, `THREADS_ACCESS_TOKEN` | Threads token generator |
+| `FB_APP_ID`, `FB_APP_SECRET` | Meta app → App settings → Basic (used by `/fbtoken`) |
+| `THREADS_USER_ID`, `THREADS_ACCESS_TOKEN` | Threads token generator (posting uses the token's own account, so a wrong ID cannot break it) |
 | `BRAND_NAME`, `BRAND_HANDLE` *(optional)* | defaults: `India In Short`, `@indiainshort.daily` |
 | `USE_GOOGLE_NEWS`, `ATTACH_LINKS`, `MAX_POSTS_PER_DAY`, `MAX_POLITICS_PER_DAY` *(optional)* | tuning knobs, see README. Leave unset for the defaults |
 | `ELECTION_SILENCE` *(add whenever an election is announced)* | e.g. `[["2026-11-01","2026-11-03"]]` (IST dates; political posts are held) |

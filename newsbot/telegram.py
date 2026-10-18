@@ -68,3 +68,11 @@ def get_updates(offset: int) -> list:
     if not data.get("ok"):
         raise RuntimeError(f"telegram getUpdates: {data}")
     return data["result"]
+
+
+def delete_message(chat_id, message_id) -> None:
+    """Used to remove a message that contained a token the moment we have read it."""
+    try:
+        _api("deleteMessage", chat_id=chat_id, message_id=message_id)
+    except Exception:
+        pass

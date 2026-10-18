@@ -16,6 +16,7 @@ def main() -> None:
     db = None
     try:
         db = DB()
+        pipeline.load_runtime_tokens(db)
         if is_digest:
             result = digest.run_digest(db)
             explain = {"paused": "Paused, nothing sent.", "exists": "Today's digest already exists.",

@@ -61,7 +61,7 @@ Monitors ~65 Indian news sources (national outlets, PIB, fact-checkers, and Goog
 
 ## Telegram commands
 
-`/status` (shows last run of every job) · `/retry <id>` · `/pause` · `/resume` · `/review` (approve everything) · `/auto` (auto-post clean stories) · `/retract <id>` · `/help`
+`/fbtoken <token>` (renew Facebook/Instagram) · `/status` (shows last run of every job) · `/retry <id>` · `/pause` · `/resume` · `/review` (approve everything) · `/auto` (auto-post clean stories) · `/retract <id>` · `/help`
 
 ## Tuning (all optional GitHub Secrets)
 

@@ -457,6 +457,33 @@ def careful_used_today(db, now: datetime = None) -> int:
                and (p["draft"].get("careful_reasons") or []) != ["political story"])
 
 
+def load_runtime_tokens(db) -> None:
+    """Prefer the Facebook/Instagram credentials saved by /fbtoken over the GitHub secrets."""
+    try:
+        token = db.get_setting("fb_page_token", "")
+        if token:
+            config.FB_PAGE_TOKEN = config.IG_TOKEN = token
+            if db.get_setting("fb_page_id", ""):
+                config.FB_PAGE_ID = db.get_setting("fb_page_id", "")
+            if db.get_setting("ig_user_id", ""):
+                config.IG_USER_ID = db.get_setting("ig_user_id", "")
+    except Exception as ex:
+        print(f"saved tokens not loaded: {str(ex)[:100]}")
+
+
+def save_fb_token(db, short_token: str) -> str:
+    """Exchange a short-lived token for a permanent Page token and keep it in the database. Returns a summary."""
+    got = meta.exchange_page_token(short_token)
+    db.set_setting("fb_page_token", got["page_token"])
+    db.set_setting("fb_page_id", got["page_id"])
+    if got.get("ig_id"):
+        db.set_setting("ig_user_id", got["ig_id"])
+    load_runtime_tokens(db)
+    ig = (f"Instagram @{got['ig_username']} (ID {got['ig_id']}) is linked." if got.get("ig_id")
+          else "No Instagram account is linked to this Page yet, so Instagram posts will fail until you link it.")
+    return f"Facebook Page '{got['page_name']}' connected with a permanent token. {ig}"
+
+
 def threads_token(db) -> str:
     return db.get_setting("threads_token", "") or config.THREADS_ACCESS_TOKEN
 
@@ -891,7 +918,7 @@ def retract(db, raw_id: str) -> None:
 HELP = ("Commands:\n/status  queue, today's posts and when each job last ran\n/pause  stop all posting\n/resume  resume\n"
         "/retry <id>  retry the platforms that failed for a post\n"
         "/retract <id>  take down a published post (deletes on Facebook)\n"
-        "/review  approve every post here first\n/auto  post automatically (default); risky stories are skipped")
+        "/fbtoken <token>  renew the Facebook/Instagram connection\n/review  approve every post here first\n/auto  post automatically (default); risky stories are skipped")
 
 
 def status_text(db) -> str:
@@ -924,6 +951,17 @@ def handle_message(db, msg: dict) -> str:
         db.set_setting("mode2", "auto")
         telegram.send_text("Auto mode ON: clean stories post by themselves. Stories that trip a safety rule "
                            "(sensitive topic, crime, election silence, facts check) are skipped, never posted.")
+    elif cmd == "/fbtoken":
+        token = parts[1] if len(parts) > 1 else ""
+        telegram.delete_message((msg.get("chat") or {}).get("id"), msg.get("message_id"))  # the token is a secret
+        if not token:
+            telegram.send_text("Usage: /fbtoken <short-lived user token from the Graph API Explorer>")
+        else:
+            try:
+                telegram.send_text("✅ " + save_fb_token(db, token) + "\nYour message with the token was deleted.")
+            except Exception as ex:
+                telegram.send_text("❌ Could not connect: " + runlog.redact(str(ex))[:300]
+                                   + "\nTip: generate a fresh token in the Graph API Explorer with your Page ticked and try again.")
     elif cmd == "/retract":
         retract(db, parts[1] if len(parts) > 1 else "")
     elif cmd == "/retry":

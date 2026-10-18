@@ -56,6 +56,8 @@ THREADS_ACCESS_TOKEN = env("THREADS_ACCESS_TOKEN")  # seed value; refreshed copy
 FB_PAGE_ID = env("FB_PAGE_ID")
 FB_PAGE_TOKEN = env("FB_PAGE_TOKEN")
 IG_USER_ID = env("IG_USER_ID")
+FB_APP_ID = env("FB_APP_ID")          # only needed for the /fbtoken Telegram command
+FB_APP_SECRET = env("FB_APP_SECRET")
 IG_TOKEN = env("IG_TOKEN") or FB_PAGE_TOKEN
 
 # --- Behaviour ------------------------------------------------------------
