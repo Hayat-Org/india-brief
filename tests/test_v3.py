@@ -348,3 +348,146 @@ def test_slot_replaces_skipped_story_with_next_best(env):
     assert db.get_article(risky["id"])["status"] == "discarded"
     assert db.get_article(ok["id"])["status"] == "published"
     assert "skipped_safety" in out["outcomes"] and "published" in out["outcomes"]
+
+
+# ---- tiers, careful mode, cleanup ----------------------------------------------------------
+from newsbot import media, safety  # noqa: E402
+
+TWO = [{"name": "The Hindu", "url": "u", "kind": "news"}, {"name": "NDTV", "url": "u2", "kind": "news"}]
+
+
+def test_classify_tiers():
+    assert safety.classify("Rape accused held in Delhi", category="Crime & Law")[0] == "blocked"
+    assert safety.classify("Communal clash in town", category="Society")[0] == "blocked"
+    assert safety.classify("Exit polls predict result", category="Politics")[0] == "blocked"
+    assert safety.classify("Man arrested for theft in Pune", category="Crime & Law")[0] == "careful"
+    assert safety.classify("Blast in market kills five", category="Weather & Disaster")[0] == "careful"
+    assert safety.classify("Parliament passes bill", category="Politics")[0] == "careful"
+    assert safety.classify("Flood hits Assam", category="Weather & Disaster")[0] == "clear"
+    assert safety.classify("Flood hits Assam", category="Weather & Disaster", ai_sensitive=True)[0] == "careful"
+
+
+def test_election_silence_blocks_political_only(monkeypatch):
+    monkeypatch.setattr(config, "ELECTION_SILENCE", [["2000-01-01", "2999-12-31"]])
+    assert safety.classify("Parliament passes bill", category="Politics")[0] == "blocked"
+    assert safety.classify("Flood hits Assam", category="Weather & Disaster")[0] == "clear"
+
+
+def test_careful_issues():
+    ok = {"threads": "Police said a man was arrested.", "facebook": "According to police, a man was held.",
+          "instagram": "Officials said an arrest was made."}
+    assert safety.careful_issues(ok, "") == []
+    bad = {"threads": "The murderer was caught.", "facebook": "Police said accused Ramesh Kumar was held.",
+           "instagram": "A man was arrested."}
+    found = " ".join(safety.careful_issues(bad, ""))
+    assert "guilt label" in found and "names an accused" in found and "no attribution" in found
+    assert not any("guilt label" in i for i in safety.careful_issues(
+        {"threads": "The court said the killer was sentenced.", "facebook": "Police said x", "instagram": "Police said x"},
+        "He was convicted and sentenced."))
+
+
+def test_careful_story_posts_with_strong_source_and_neutral_note(env, monkeypatch):
+    db = FakeDB()
+    seen = {}
+    monkeypatch.setattr(ai, "write_post", lambda a, b, d, careful=False: seen.update(careful=careful) or {
+        "threads": "Police said a man was arrested in Pune after a theft complaint.",
+        "facebook": "Police said a man was arrested in Pune after a theft complaint.",
+        "instagram": "Police said a man was arrested in Pune after a theft complaint.",
+        "card_headline": "Man arrested in Pune theft case", "hashtags": [], "photo_query": "Pune city"})
+    monkeypatch.setattr(photos, "find_photo", lambda q: seen.update(photo_asked=True))
+    monkeypatch.setattr(meta, "post_facebook", lambda t, l=None, image_url=None: seen.update(fb=t) or "f-1")
+    row = add_candidate(db, "Man arrested in Pune theft case", kind="news", category="Crime & Law", state="Maharashtra",
+                        sources_=TWO)
+    db.update_article(row["id"], {"corroboration": 2, "snippet": "Police said on Monday a man was arrested in Pune."})
+    monkeypatch.setattr(media, "fetch_text", lambda u: "Police said a man was arrested in Pune after a theft complaint.")
+    assert pipeline.process_candidate(db, db.get_article(row["id"])) == "published"
+    assert seen["careful"] is True and "photo_asked" not in seen
+    assert "Allegations are not proven" in seen["fb"]
+    assert db.get_article(row["id"])["draft"]["careful"] is True
+
+
+def test_careful_story_single_source_is_skipped(env):
+    db = FakeDB()
+    row = add_candidate(db, "Man arrested in Pune theft case", kind="news", category="Crime & Law",
+                        sources_=[{"name": "The Hindu", "url": "u", "kind": "news"}])
+    assert pipeline.process_candidate(db, db.get_article(row["id"])) == "skipped_safety"
+    assert "single source" in db.get_article(row["id"])["hold_reason"]
+
+
+def test_careful_daily_cap_defers(env, monkeypatch):
+    db = FakeDB()
+    monkeypatch.setattr(config, "MAX_CAREFUL_PER_DAY", 1)
+    done = add_candidate(db, "Earlier crime story", category="Crime & Law", kind="news", sources_=TWO)
+    db.update_article(done["id"], {"status": "published", "posted_at": datetime.now(timezone.utc).isoformat(),
+                                   "draft": {"careful": True, "careful_reasons": ["crime/legal story"]}})
+    row = add_candidate(db, "Another crime story", category="Crime & Law", kind="news", sources_=TWO)
+    db.update_article(row["id"], {"corroboration": 2})
+    assert pipeline.process_candidate(db, db.get_article(row["id"])) == "deferred"
+    assert db.get_article(row["id"])["status"] == "candidate"
+
+
+def test_blocked_story_never_drafted(env, monkeypatch):
+    db = FakeDB()
+    monkeypatch.setattr(ai, "write_post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not draft")))
+    row = add_candidate(db, "Rape accused held in Delhi", category="Crime & Law", kind="news", sources_=TWO)
+    assert pipeline.process_candidate(db, db.get_article(row["id"])) == "skipped_safety"
+    assert db.get_article(row["id"])["hold_reason"].startswith("blocked")
+
+
+def test_undated_feed_items_are_skipped(monkeypatch):
+    import types
+
+    class FP:
+        @staticmethod
+        def parse(content):
+            return types.SimpleNamespace(entries=[
+                {"title": "Dated story from outlet", "link": "https://x/1", "summary": "", "published": "Mon, 12 Oct 2026 10:00:00 GMT"},
+                {"title": "Undated story from outlet", "link": "https://x/2", "summary": ""}])
+
+    import sys, types
+    had = sys.modules.get("feedparser")
+    sys.modules["feedparser"] = FP
+    monkeypatch.setattr(pipeline, "_entry_time", lambda e: datetime.now(timezone.utc) if e.get("published") else None)
+    try:
+        items = pipeline._parse(b"", Feed("X", "u", "news"))
+    finally:
+        if had is None:
+            del sys.modules["feedparser"]
+        else:
+            sys.modules["feedparser"] = had
+    assert [i.url for i in items] == ["https://x/1"]
+
+
+def test_cleanup_deletes_old_rows_keeps_published_and_removes_images(env, monkeypatch):
+    db = FakeDB()
+    base = f"{config.SUPABASE_URL}/storage/v1/object/public/{config.SUPABASE_BUCKET}/"
+    removed = []
+    monkeypatch.setattr(media, "delete_cards", lambda names: removed.extend(names) or len(names))
+    old = add_candidate(db, "Old discarded", hours_seen=100)
+    db.update_article(old["id"], {"status": "discarded", "card_url": base + "a.jpg"})
+    kept = add_candidate(db, "Old published", hours_seen=100)
+    db.update_article(kept["id"], {"status": "published", "card_url": base + "b.jpg", "draft": {"slides": [base + "s1.jpg"]}})
+    fresh = add_candidate(db, "Fresh", hours_seen=10)
+    out = pipeline.cleanup_old(db)
+    assert out["rows"] == 1 and sorted(removed) == ["a.jpg", "b.jpg", "s1.jpg"]
+    assert old["id"] not in db.rows and kept["id"] in db.rows and fresh["id"] in db.rows
+    assert db.get_article(kept["id"])["card_url"] is None
+
+
+def test_retention_never_below_age_limit():
+    assert config.DATA_RETENTION_HOURS >= config.ARTICLE_MAX_AGE_HOURS + 24
+
+
+def test_openverse_filters_licence_and_people(monkeypatch):
+    class R:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"results": [
+                {"license": "by-sa", "url": "u1", "width": 2000, "title": "Sunset"},
+                {"license": "by", "url": "u2", "width": 2000, "title": "Portrait of a man"},
+                {"license": "by", "url": "u3", "width": 500, "title": "Small"},
+                {"license": "by", "license_version": "4.0", "url": "u4", "width": 2000, "title": "Majuli sunset",
+                 "creator": "C. Creator", "provider": "flickr"}]}
+    monkeypatch.setattr(photos.requests, "get", lambda *a, **k: R())
+    hit = photos.openverse("Majuli")
+    assert hit["url"] == "u4" and "C. Creator" in hit["credit"] and "CC BY 4.0" in hit["credit"]

@@ -65,6 +65,10 @@ def main() -> None:
         expired = stage(log, "Cleaning up old items", lambda: pipeline.expire_old(db), 0)
         if expired:
             log.add(f"Expired {expired} old items")
+        cleaned = stage(log, "Old-data cleanup", lambda: pipeline.cleanup_old(db))
+        if cleaned and (cleaned["rows"] or cleaned["images"]):
+            log.add(f"Cleanup: removed {cleaned['rows']} stories and {cleaned['images']} images older than "
+                    f"{pipeline.config.DATA_RETENTION_HOURS}h (published posts are kept)")
         breaking = stage(log, "Fast-track check", lambda: pipeline.breaking_pass(db), [])
         if breaking:
             log.mark_activity()

@@ -3,8 +3,9 @@
 We never copy a publisher's own photograph. Allowed sources, tried in order:
   1. Wikimedia Commons, only files licensed CC0, public domain or CC BY (attribution only: no
      ShareAlike/NoDerivs/NonCommercial, nothing marked non-free or restricted).
-  2. Pexels (free licence, optional, needs PEXELS_API_KEY).
-  3. No photo: the post uses our own designed card.
+  2. Openverse (no key): only CC0, public-domain-mark and CC BY images (the same licence rule).
+  3. Pixabay or Pexels (free licences, optional keys: PIXABAY_API_KEY / PEXELS_API_KEY).
+  4. No photo: the post uses our own designed card.
 Photos are chosen from a place or scene keyword, never a person, and are always credited and
 labelled as a representative image. Anything uncertain is rejected.
 """
@@ -104,6 +105,43 @@ def pexels(query: str):
     return None
 
 
+def openverse(query: str):
+    """Keyless. Filters to licences we can use with credit only (CC0, public domain mark, CC BY)."""
+    r = requests.get("https://api.openverse.org/v1/images/", headers=HEADERS, timeout=25, params={
+        "q": query, "license": "cc0,pdm,by", "category": "photograph", "extension": "jpg,jpeg,png",
+        "mature": "false", "page_size": 15})
+    r.raise_for_status()
+    for p in r.json().get("results", []):
+        lic = (p.get("license") or "").lower()
+        if lic not in ("cc0", "pdm", "by"):
+            continue
+        text = f"{p.get('title', '')} {' '.join(t.get('name', '') for t in p.get('tags') or [])}"
+        if PERSON_WORDS.search(text) or (p.get("width") or 0) < MIN_WIDTH or not p.get("url"):
+            continue
+        label = {"cc0": "CC0", "pdm": "Public domain", "by": f"CC BY {p.get('license_version', '')}".strip()}[lic]
+        creator = (p.get("creator") or "Unknown author")[:60]
+        return {"url": p["url"], "credit": f"{creator} / {p.get('provider') or p.get('source') or 'Openverse'}, {label}",
+                "source": "openverse", "page": p.get("foreign_landing_url", "")}
+    return None
+
+
+def pixabay(query: str):
+    if not config.PIXABAY_API_KEY:
+        return None
+    r = requests.get("https://pixabay.com/api/", timeout=25, params={
+        "key": config.PIXABAY_API_KEY, "q": query, "image_type": "photo", "orientation": "vertical",
+        "safesearch": "true", "min_width": MIN_WIDTH, "per_page": 15})
+    r.raise_for_status()
+    for p in r.json().get("hits", []):
+        if PERSON_WORDS.search(p.get("tags", "")):
+            continue
+        url = p.get("largeImageURL") or p.get("webformatURL")
+        if url:
+            return {"url": url, "credit": f"{p.get('user', 'Photographer')} / Pixabay", "source": "pixabay",
+                    "page": p.get("pageURL", "")}
+    return None
+
+
 def download(url: str):
     from PIL import Image
     r = requests.get(url, headers=HEADERS, timeout=40)
@@ -118,7 +156,8 @@ def find_photo(query: str):
     query = clean_query(query)
     if not query or PERSON_WORDS.search(query) or not config.USE_PHOTOS:
         return None
-    for finder in (lambda: pick_commons(commons_candidates(query)), lambda: pexels(query)):
+    for finder in (lambda: pick_commons(commons_candidates(query)), lambda: openverse(query),
+                   lambda: pixabay(query), lambda: pexels(query)):
         try:
             hit = finder()
             if hit:

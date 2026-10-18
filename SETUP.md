@@ -95,8 +95,8 @@ Open the Threads app and sign in with the Instagram account. Set the bio.
 
 ---
 
-### Optional: Pexels key (more photo choice)
-Free. Go to pexels.com/api, sign up, and request an API key (instant). Add it as the GitHub secret `PEXELS_API_KEY`. Without it, photos come from Wikimedia Commons only.
+### Optional: Pixabay key (more photo choice)
+Pexels has paused new API keys, and Wikimedia Commons plus Openverse already work without any key. For more choice, sign up free at pixabay.com, open pixabay.com/api/docs and copy your key, then add it as the GitHub secret `PIXABAY_API_KEY`.
 
 ## 2. GitHub Secrets
 

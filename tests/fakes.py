@@ -38,6 +38,16 @@ class FakeDB:
             counts[r["status"]] = counts.get(r["status"], 0) + 1
         return counts
 
+    def old_with_cards(self, cutoff_iso, limit=300):
+        return [dict(r) for r in self.rows.values()
+                if r.get("created_at", "") < cutoff_iso and r.get("card_url")][:limit]
+
+    def purge_old(self, cutoff_iso, keep_status="published"):
+        gone = [i for i, r in self.rows.items() if r.get("created_at", "") < cutoff_iso and r["status"] != keep_status]
+        for i in gone:
+            del self.rows[i]
+        return len(gone)
+
     def get_setting(self, key, default=""):
         return self.settings.get(key, default)
 

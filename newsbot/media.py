@@ -59,3 +59,22 @@ def upload_card(jpeg: bytes, name: str) -> str:
     if r.status_code >= 300:
         raise RuntimeError(f"card upload failed {r.status_code}: {r.text[:200]}")
     return f"{config.SUPABASE_URL}/storage/v1/object/public/{config.SUPABASE_BUCKET}/{name}"
+
+
+def card_object_name(url: str) -> str:
+    """The file name inside our storage bucket for one of our public card URLs ('' if it is not ours)."""
+    marker = f"/storage/v1/object/public/{config.SUPABASE_BUCKET}/"
+    return url.split(marker, 1)[1] if marker in (url or "") else ""
+
+
+def delete_cards(names: list) -> int:
+    """Bulk-delete images from the bucket. Returns how many were removed."""
+    names = [n for n in names if n]
+    if not names or config.DRY_RUN or not config.SUPABASE_URL:
+        return 0
+    r = requests.delete(f"{config.SUPABASE_URL}/storage/v1/object/{config.SUPABASE_BUCKET}", timeout=60,
+                        headers={**config.supabase_auth_headers(), "Content-Type": "application/json"},
+                        json={"prefixes": names})
+    if r.status_code >= 300:
+        raise RuntimeError(f"image cleanup failed {r.status_code}: {r.text[:200]}")
+    return len(r.json() or [])

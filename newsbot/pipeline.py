@@ -18,7 +18,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 KIND_RANK = {"govt": 0, "factcheck": 0, "niche": 1, "news": 1, "state_gn": 2}
 MAINSTREAM_KINDS = ("news", "state_gn")        # big national/regional outlets and Google News queries
 SPOTLIGHT_SOURCE_KINDS = ("niche", "govt")     # sources a Spotlight story may come from
-MAX_UNDATED_PER_FEED = 3                       # feeds without dates: take only the first few
+MAX_UNDATED_PER_FEED = 0                       # items without a date cannot be proven fresh, so they are skipped
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +369,28 @@ def expire_old(db, now: datetime = None) -> int:
     return n
 
 
+def cleanup_old(db, now: datetime = None) -> dict:
+    """Delete rows older than DATA_RETENTION_HOURS (published posts stay as the audit trail) and the
+    card images of every story that old. Returns counts."""
+    now = now or now_utc()
+    cutoff = iso(now - timedelta(hours=config.DATA_RETENTION_HOURS))
+    out = {"images": 0, "rows": 0}
+    old = db.old_with_cards(cutoff)
+    names = []
+    for r in old:
+        names.append(media.card_object_name(r.get("card_url") or ""))
+        names += [media.card_object_name(u) for u in ((r.get("draft") or {}).get("slides") or [])]
+    try:
+        out["images"] = media.delete_cards(names)
+    except Exception as ex:  # images are best effort; rows are still cleaned
+        runlog.warn(f"Image cleanup problem: {str(ex)[:160]}")
+    for r in old:
+        if r.get("status") == "published":  # row stays, but its image is gone
+            db.update_article(r["id"], {"card_url": None})
+    out["rows"] = db.purge_old(cutoff)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # drafting + publishing
 # ---------------------------------------------------------------------------
@@ -413,6 +435,10 @@ def build_texts(draft: dict, a: dict) -> dict:
     instagram = (shorten(draft["instagram"], 1000)
                  + f"\n\nSource: {src}. Read the full story at the original publisher.\n\n"
                  + " ".join(ig_tags))
+    if draft.get("careful"):
+        note = f"Reported by {src}. Allegations are not proven unless a court says so."
+        facebook = facebook.replace("\n#India", f"\n\n{note}\n#India", 1) if "\n#India" in facebook else facebook + f"\n\n{note}"
+        instagram = instagram.replace("\n\n#", f"\n\n{note}\n\n#", 1) if "\n\n#" in instagram else instagram + f"\n\n{note}"
     credit = draft.get("photo_credit")
     if credit:  # licence terms: credit the photographer wherever the photo appears
         line = f"\n\nRepresentative image. Photo: {credit}"
@@ -421,6 +447,14 @@ def build_texts(draft: dict, a: dict) -> dict:
         if len(threads) + len(f"\nPhoto: {credit}") <= 490:
             threads += f"\nPhoto: {credit}"
     return {"threads": threads[:490], "facebook": facebook, "instagram": instagram[:2100]}
+
+
+def careful_used_today(db, now: datetime = None) -> int:
+    """Crime/violence/legal posts already published or queued today (political ones have their own cap)."""
+    now = now or now_utc()
+    rows = stories(db.list_posted_since(iso(ist_day_start(now)))) + stories(db.list_by_status("pending_review"))
+    return sum(1 for p in rows if (p.get("draft") or {}).get("careful")
+               and (p["draft"].get("careful_reasons") or []) != ["political story"])
 
 
 def threads_token(db) -> str:
@@ -531,13 +565,36 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
     developing = (a.get("corroboration") or 1) < 2 and a.get("source_kind") not in ("govt", "factcheck")
     facts = f"{a['title']}\n{a.get('snippet') or ''}\n{body}"
 
+    tier, tier_reasons = safety.classify(a["title"], a.get("snippet") or "", body, a.get("category") or "",
+                                         bool(a.get("sensitive")), a.get("sensitive_reason") or "")
+    careful = tier == "careful"
+    if tier == "blocked" and mode == "auto":
+        db.update_article(a["id"], {"status": "discarded", "hold_reason": "blocked: " + "; ".join(tier_reasons)})
+        runlog.note(f"{tag} → not posted, blocked by law/policy: {'; '.join(tier_reasons)}")
+        return "skipped_safety"
+    if careful and mode == "auto":
+        strong = (a.get("corroboration") or 1) >= 2 or a.get("source_kind") in ("govt", "factcheck")
+        if not strong:
+            db.update_article(a["id"], {"status": "discarded", "hold_reason": "careful story, single source"})
+            runlog.note(f"{tag} → not posted: sensitive story ({'; '.join(tier_reasons)}) needs 2+ outlets or an official source")
+            return "skipped_safety"
+        if tier_reasons != ["political story"] and careful_used_today(db) >= config.MAX_CAREFUL_PER_DAY:
+            runlog.note(f"{tag} → deferred: today's limit of {config.MAX_CAREFUL_PER_DAY} crime/violence/legal posts is used")
+            return "deferred"
+
+    kw = {"careful": True} if careful else {}
+
+    def check(d):
+        found = safety.check_draft(d, facts)
+        return found + (safety.careful_issues(d, facts) if careful else [])
+
     try:
-        draft = ai.write_post(a, body, developing)
-        issues = safety.check_draft(draft, facts)
+        draft = ai.write_post(a, body, developing, **kw)
+        issues = check(draft)
         if issues:  # one retry; keep the cleaner draft
             try:
-                second = ai.write_post(a, body, developing)
-                second_issues = safety.check_draft(second, facts)
+                second = ai.write_post(a, body, developing, **kw)
+                second_issues = check(second)
                 if len(second_issues) < len(issues):
                     draft, issues = second, second_issues
             except Exception:
@@ -551,20 +608,16 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
         return "draft_failed"
 
     draft["link"], draft["developing"], draft["spotlight"] = link, developing, spotlight
+    draft["careful"], draft["careful_reasons"] = careful, tier_reasons
     flags, hold = [], []
-    sens = a.get("sensitive") or safety.is_sensitive(f"{a['title']} {a.get('snippet') or ''}")
-    if sens:
-        flags.append(f"Sensitive topic: {a.get('sensitive_reason') or sens}")
-        hold.append("sensitive topic")
-    if a.get("category") == "Crime & Law":
-        flags.append("Crime story: may name accused persons. Check wording (alleged/accused)")
-        hold.append("crime/legal")
-    if safety.in_election_silence() and a.get("category") in ("Politics", "Government & Policy"):
-        flags.append("Election-silence window: political post")
-        hold.append("election silence")
+    if tier == "blocked":
+        flags.append("Blocked by law/policy: " + "; ".join(tier_reasons))
+        hold.append("blocked: " + "; ".join(tier_reasons))
+    elif careful:
+        flags.append("Careful story: " + "; ".join(tier_reasons) + ". Check attribution and wording.")
     if issues:
         flags.extend(issues[:6])
-        hold.append("facts check")
+        hold.append("careful-mode checks" if careful else "facts check")
     if spotlight:
         flags.append("SPOTLIGHT: only specialist/regional/official sources so far; no big national outlet has "
                      "carried it. Check the original report before approving.")
@@ -573,7 +626,8 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
     elif developing:
         flags.append("Developing: single outlet so far")
 
-    photo = photos.find_photo(draft.get("photo_query") or fallback_photo_query(a))
+    # No photo for careful stories: a picture of a place could suggest where an alleged crime happened.
+    photo = None if careful else photos.find_photo(draft.get("photo_query") or fallback_photo_query(a))
     if photo:
         draft["photo_credit"], draft["photo_source"] = photo["credit"], photo["source"]
         runlog.note(f"{tag} → photo from {photo['source']}")

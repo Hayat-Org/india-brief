@@ -1,7 +1,13 @@
-"""Safety gates. Anything flagged here is HELD for human approval, never auto-posted.
+"""Safety gates, in three tiers.
 
-Rationale: Indian law (defamation, contempt, BNS provisions on promoting enmity,
-IT Rules) and Meta policy make a few topics too risky to leave fully automated.
+  blocked  never posted: things the law or Meta policy forbids outright (identifying rape victims or
+           minors, pending-case commentary, poll results, election silence, communal flashpoints, suicide).
+  careful  crime/legal, terror and violence, state violence, politics, anything the AI flags as sensitive.
+           Posted only with a strong source, strict attribution drafting and extra checks (see careful_issues).
+  clear    everything else.
+
+Rationale: Indian law (defamation, contempt, BNS provisions on promoting enmity, victim and minor
+identity rules, RP Act 126/126A, IT Rules) and Meta policy.
 """
 import re
 from datetime import datetime, timedelta, timezone
@@ -26,6 +32,10 @@ SENSITIVE_PATTERNS = [
     (r"\bmodel code of conduct\b", "election conduct"),
 ]
 _SENSITIVE = [(re.compile(p, re.I), reason) for p, reason in SENSITIVE_PATTERNS]
+
+# Reasons (from SENSITIVE_PATTERNS) that are blocked outright. Everything else that matches is "careful".
+BLOCKED_REASONS = {"communal/mob violence", "sexual offence", "minor involved", "suicide/self-harm",
+                   "religious flashpoint", "legal risk", "election poll publication rules"}
 
 # Loaded, name-calling or dehumanising terms. A neutral desk should never write these itself.
 LOADED_TERMS = re.compile(
@@ -57,6 +67,55 @@ def is_sensitive(text: str):
         if pattern.search(text or ""):
             return reason
     return None
+
+
+def classify(title: str, snippet: str = "", body: str = "", category: str = "", ai_sensitive: bool = False,
+             ai_reason: str = "", now: datetime = None):
+    """Return (tier, [reasons]) with tier in {"blocked", "careful", "clear"}."""
+    blocked, careful = [], []
+    head = f"{title} {snippet}"
+    for pattern, reason in _SENSITIVE:
+        if pattern.search(head) or (reason in BLOCKED_REASONS and pattern.search((body or "")[:1500])):
+            (blocked if reason in BLOCKED_REASONS else careful).append(reason)
+    if in_election_silence(now) and category in ("Politics", "Government & Policy"):
+        blocked.append("election-silence window")
+    if blocked:
+        return "blocked", list(dict.fromkeys(blocked))
+    if category == "Crime & Law":
+        careful.append("crime/legal story")
+    if ai_sensitive:
+        careful.append(ai_reason or "flagged sensitive by the AI")
+    if category == "Politics":
+        careful.append("political story")
+    if careful:
+        return "careful", list(dict.fromkeys(careful))
+    return "clear", []
+
+
+ATTRIBUTION_CUE = re.compile(
+    r"\b(police|officials?|court|judge|bench|tribunal|ministry|government|authorities|said|says|told|"
+    r"according to|reported|announced|ordered|stated|alleged|allegedly|claimed|confirmed|reports?)\b", re.I)
+GUILT_LABELS = re.compile(
+    r"\b(murderer|killer|rapist|culprit|fraudster|conman|thief|criminal|offender|goon|"
+    r"guilty|mastermind|monster|beast)\b", re.I)
+NAMED_ACCUSED = re.compile(
+    r"\b(accused|arrested|suspect|held|booked|detained|charged)\b[:,]?\s+(?:(?:Mr|Mrs|Ms|Dr|Shri|Smt)\.?\s+)?"
+    r"[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}")
+CONVICTION_OK = re.compile(r"\b(convicted|sentenced|found guilty)\b", re.I)
+
+
+def careful_issues(draft: dict, facts_text: str) -> list:
+    """Extra checks for the careful tier. Empty list = passes."""
+    issues = []
+    for platform in ("threads", "facebook", "instagram"):
+        text = draft.get(platform) or ""
+        if not ATTRIBUTION_CUE.search(text):
+            issues.append(f"{platform}: no attribution (police said / according to ...)")
+        if GUILT_LABELS.search(text) and not CONVICTION_OK.search(facts_text or ""):
+            issues.append(f"{platform}: presents an allegation as proven (guilt label)")
+        if NAMED_ACCUSED.search(text):
+            issues.append(f"{platform}: names an accused person")
+    return list(dict.fromkeys(issues))
 
 
 def in_election_silence(now: datetime = None) -> bool:

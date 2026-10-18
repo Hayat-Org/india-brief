@@ -43,9 +43,10 @@
 
 ## 3. What the system enforces automatically
 
+- **Data retention:** stories and images older than 72 hours are deleted automatically (published posts stay as the audit trail, minus the image), which also limits personal data held (DPDP).
 - **Photos:** only Wikimedia Commons files under CC0, public domain or plain CC BY, and optionally Pexels. Never a publisher's own photograph, never ShareAlike/NonCommercial/NoDerivs files, nothing marked non-free or restricted, and no photo searched by a person's name. Every photo is labelled "Representative image" and credited on the card and in the caption (the CC BY attribution requirement). Re-check the licence on the Commons page if a complaint arrives; delete the post and the photo is gone from our side.
 
-- **Skipped (never posted) when approval is off, which is the default:** sensitive topics; all **Crime & Law** stories; election-silence windows; poll/exit-poll stories; any draft failing the **facts-only** check (invented numbers or names); personal data; loaded/insulting terms.
+- **Tiered handling (approval is off by default):** *Blocked* topics are never posted: sexual offences and any story identifying a victim or minor (BNS s.72, POCSO s.23, JJ Act s.74), suicide, communal flashpoints, poll results and election-silence windows (RP Act s.126/126A), sub judice or contempt matters. *Careful* topics (crime/legal, terror and violence, state violence, politics) are posted only with 2+ outlets or an official source, attributed drafting, no accused or victim names, no guilt labels, no photo, a neutral note, and a daily cap. Facts-check failures are always skipped. Earlier wording, for reference: sensitive topics; all **Crime & Law** stories; election-silence windows; poll/exit-poll stories; any draft failing the **facts-only** check (invented numbers or names); personal data; loaded/insulting terms.
 - **Cross-source rule:** single-source stories are labelled "Developing" and attributed.
 - **Spotlight stories** (important, from specialist/regional sources not yet carried by national outlets) are max 1 a day, labelled as such, always attributed, never called "exclusive", and held for your approval unless from an official government source.
 - **Freshness:** nothing published more than 48 hours earlier is posted.

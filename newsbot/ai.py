@@ -237,18 +237,30 @@ OUTPUT: JSON only with keys
 Do NOT include URLs, the outlet name as a sign-off, or hashtags inside the texts: those are added automatically."""
 
 
-def write_post(article: dict, body: str, developing: bool) -> dict:
+CAREFUL_RULES = """
+CAREFUL MODE (this is a crime, legal, violence or political story). Extra rules, all mandatory:
+- Attribute every claim: "police said", "according to the court", "officials said", "the ministry said".
+- Anything not yet proven is "alleged"; people are "accused" or "arrested", never called a criminal, murderer, rapist or similar. Add that it is an allegation where it fits.
+- Do NOT name any accused person, suspect, victim, minor or relative. Say "a 34-year-old man", "a woman", "the owner" instead. Public office holders speaking in office may be named.
+- No graphic detail, no speculation about motive, no mention of anyone's religion, caste or community unless the article says it is central, and even then stay neutral.
+- Do not comment on guilt, innocence or the merits of a court case; report what the court or police did or said.
+- Political stories: give each side the same treatment, no adjectives, no praise or blame.
+"""
+
+
+def write_post(article: dict, body: str, developing: bool, careful: bool = False) -> dict:
     srcs = ", ".join(s["name"] for s in article.get("sources", [])) or article.get("source", "")
     user = (
         f"STATUS: {'DEVELOPING (single source)' if developing else 'Confirmed by multiple outlets'}\n"
         f"FACT-CHECK STORY: {'yes' if article.get('is_factcheck') else 'no'}\n"
         f"SPOTLIGHT: {'yes' if article.get('spotlight') else 'no'}\n"
+        f"CAREFUL MODE: {'yes' if careful else 'no'}\n"
         f"OUTLETS: {srcs}\n"
         f"CATEGORY: {article.get('category')}  REGION: {article.get('state')}\n\n"
         f"HEADLINE: {article['title']}\nSUMMARY: {article.get('snippet') or ''}\n"
         f"ARTICLE TEXT:\n{body[:3500] if body else '(not available; use headline and summary only)'}"
     )
-    d = chat_json(draft_system(), user, "quality")
+    d = chat_json(draft_system() + (CAREFUL_RULES if careful else ""), user, "quality")
     for key in ("threads", "facebook", "instagram", "card_headline"):
         d[key] = str(d.get(key) or "").strip()
     d["photo_query"] = re.sub(r"[^A-Za-z0-9 ,'\-]", " ", str(d.get("photo_query") or "")).strip()[:60]

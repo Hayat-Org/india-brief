@@ -73,6 +73,20 @@ class DB:
             counts[r["status"]] = counts.get(r["status"], 0) + 1
         return counts
 
+    # --- cleanup ----------------------------------------------------------
+    def old_with_cards(self, cutoff_iso: str, limit: int = 300) -> list:
+        """Stories created before the cutoff that still point at images in the storage bucket."""
+        return self._req("GET", "/articles", params={
+            "select": "id,card_url,draft,status", "created_at": f"lt.{cutoff_iso}",
+            "card_url": "not.is.null", "order": "created_at.asc", "limit": str(limit)})
+
+    def purge_old(self, cutoff_iso: str, keep_status: str = "published") -> int:
+        """Delete stories created before the cutoff, except published posts (the audit trail)."""
+        rows = self._req("DELETE", "/articles", params={
+            "created_at": f"lt.{cutoff_iso}", "status": f"neq.{keep_status}", "select": "id"},
+            prefer="return=representation")
+        return len(rows or [])
+
     # --- settings ---------------------------------------------------------
     def get_setting(self, key: str, default: str = ""):
         rows = self._req("GET", "/settings", params={"key": f"eq.{key}", "select": "value"})
