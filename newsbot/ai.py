@@ -232,7 +232,7 @@ OUTPUT: JSON only with keys
 "threads" (max 380 chars), "facebook" (max 650 chars, may use 2 short paragraphs),
 "instagram" (max 900 chars, 2-3 short paragraphs),
 "card_headline" (max 95 chars, a plain factual statement, no quotes marks),
-"hashtags" (3 topic-specific lowercase words, no #, no spaces),
+"hashtags" (a JSON list of 5 short topic phrases of 1-3 words each, no #, e.g. ["Durga Puja", "Kolkata", "crowd safety"]: the specific event, place, organisation or subject. Never generic spam tags like viral, trending or news),
 "photo_query" (2-4 plain words naming a PLACE, LANDMARK or SCENE for a stock/archive photo, e.g. "Majuli island Assam" or "monsoon flooded street India". Never a person, party, accused or victim, never a brand; empty string if nothing suitable).
 Do NOT include URLs, the outlet name as a sign-off, or hashtags inside the texts: those are added automatically."""
 
@@ -264,9 +264,8 @@ def write_post(article: dict, body: str, developing: bool, careful: bool = False
     for key in ("threads", "facebook", "instagram", "card_headline"):
         d[key] = str(d.get(key) or "").strip()
     d["photo_query"] = re.sub(r"[^A-Za-z0-9 ,'\-]", " ", str(d.get("photo_query") or "")).strip()[:60]
-    tags = d.get("hashtags") or []
-    d["hashtags"] = [re.sub(r"[^a-z0-9]", "", str(t).lower()) for t in tags][:3]
-    d["hashtags"] = [t for t in d["hashtags"] if t]
+    from . import hashtags as _hashtags
+    d["hashtags"] = _hashtags.normalize(d.get("hashtags"))
     return d
 
 

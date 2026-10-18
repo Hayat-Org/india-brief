@@ -78,6 +78,10 @@ Monitors ~65 Indian news sources (national outlets, PIB, fact-checkers, and Goog
   4. otherwise our plain designed card.
 - Photos are searched by place or scene only, never a person, are labelled "Representative image" with the credit on the card and in every caption. Publisher photos are never copied. `USE_PHOTOS=0` turns photos off.
 
+## Hashtags
+
+Mandatory on every post, per platform: Instagram 5 (Meta's cap), Facebook 3, Threads 1. See `newsbot/hashtags.py`. The AI proposes up to 5 topic phrases; the code cleans them, adds place, `#IndiaNews` and `#IndiaInShort`, and strips any tags the AI wrote inside the text.
+
 ## Data retention
 
 Every ingest run deletes stories older than 72 hours (`DATA_RETENTION_HOURS`, never below the 48 h age limit + 24 h) and the card images of stories that old. Published posts stay as the audit trail (their image is removed). Feed items with no date are skipped because their age cannot be proven.

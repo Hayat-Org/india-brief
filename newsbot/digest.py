@@ -42,7 +42,7 @@ def run_digest(db, now: datetime = None) -> str:
     alts = ["Today in short: cover"] + [f"{h}. Source: {src}" for h, src in zip(headlines, sources)]
 
     header = "Today in short: the stories that mattered across India"
-    threads = _fit_threads(header, headlines, "Sources and links on our Facebook page.")
+    threads = _fit_threads(header, headlines, "Sources and links on our Facebook page.\n\n#IndiaNews")
     fb_lines = [f"{i}. {h} ({src})\n{(s['draft'].get('link') or s['url'])}"
                 for i, (h, src, s) in enumerate(zip(headlines, sources, top), 1)]
     facebook = f"{header}\n\n" + "\n\n".join(fb_lines) + "\n\n#India #IndiaNews"

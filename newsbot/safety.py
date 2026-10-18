@@ -47,6 +47,16 @@ LOADED_TERMS = re.compile(
     re.I,
 )
 
+# Meta's engagement-bait rules (asking for likes, shares, tags, follows, comments) demote or remove posts.
+ENGAGEMENT_BAIT = re.compile(
+    r"\b(like|share|tag|follow|subscribe|retweet|repost)\s+(this|us|our|if|for|a friend|your)\b|"
+    r"\b(tag|share with)\s+(a|your|someone|friends?)\b|comment\s+(below|yes|if|your)|"
+    r"\btap (the )?(like|heart)\b|\bsmash\b|\bdouble.?tap\b|link in bio|\bfollow for more\b", re.I)
+SHOUTING = re.compile(r"(?:\b[A-Z]{4,}\b[\s,]+){2,}\b[A-Z]{4,}\b|(?:\b[A-Z]{4,}\b[\s,]+){3,}")
+EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF]")
+EMOTIVE = re.compile(r"\b(tragic|tragedy|horrific|horrifying|shocking|shocked|brutal|brutally|gruesome|heartbreaking|"
+                     r"devastating|chilling|ghastly|barbaric|savage|sickening|terrifying|nightmare)\b", re.I)
+
 # Phone numbers, e-mails and 12-digit ID-style numbers must never appear in a post (privacy / DPDP).
 PERSONAL_DATA = re.compile(
     r"(?<!\d)(?:\+91[\s-]?)?[6-9]\d{9}(?!\d)|[\w.+-]+@[\w-]+\.[\w.]+|\b\d{4}\s\d{4}\s\d{4}\b"
@@ -115,6 +125,8 @@ def careful_issues(draft: dict, facts_text: str) -> list:
             issues.append(f"{platform}: presents an allegation as proven (guilt label)")
         if NAMED_ACCUSED.search(text):
             issues.append(f"{platform}: names an accused person")
+        if EMOTIVE.search(text):
+            issues.append(f"{platform}: emotive wording ('{EMOTIVE.search(text).group(1)}'); keep it plain on deaths and crime")
     return list(dict.fromkeys(issues))
 
 
@@ -152,6 +164,12 @@ def check_draft(draft: dict, facts_text: str, now: datetime = None) -> list:
             issues.append(f"{platform}: contains personal data (phone/email/ID number)")
         if LOADED_TERMS.search(text):
             issues.append(f"{platform}: loaded/insulting term")
+        if ENGAGEMENT_BAIT.search(text):
+            issues.append(f"{platform}: engagement bait (asks for likes/shares/tags/follows)")
+        if SHOUTING.search(text):
+            issues.append(f"{platform}: shouting in capital letters")
+        if len(EMOJI.findall(text)) > 2:
+            issues.append(f"{platform}: too many emoji")
         for n in _numbers(text):
             if n not in facts_nums and n not in years_ok:
                 issues.append(f"{platform}: number '{n}' not found in source")

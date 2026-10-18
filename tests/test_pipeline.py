@@ -203,8 +203,9 @@ def test_build_texts_limits_and_credit():
     t = pipeline.build_texts(draft, a)
     assert len(t["threads"]) <= 490 and "via The Hindu, NDTV" in t["threads"]
     assert "Source: The Hindu, NDTV" in t["facebook"]
-    assert "#WeatherDisaster" in t["instagram"] and "#Assam" in t["instagram"]
-    assert t["instagram"].split("\n")[-1].count("#") <= 5
+    last = t["instagram"].split("\n")[-1]
+    assert "#Assam" in last and "#IndiaNews" in last and "#IndiaInShort" in last and last.count("#") == 5
+    assert t["threads"].split("\n")[-1].count("#") == 1 and len(t["facebook"].split("\n")[-1].split()) == 3
 
 
 def test_card_renders():

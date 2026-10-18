@@ -10,7 +10,7 @@ from email.utils import parsedate_to_datetime
 import requests
 from bs4 import BeautifulSoup
 
-from . import ai, cards, config, dedup, media, meta, photos, runlog, safety, telegram
+from . import ai, cards, config, dedup, hashtags, media, meta, photos, runlog, safety, telegram
 from . import trends as trendlib
 from .sources import Feed, fallback_feed
 
@@ -418,34 +418,31 @@ def source_line(a: dict) -> str:
 
 
 def build_texts(draft: dict, a: dict) -> dict:
+    """Final text for each platform. Hashtags are mandatory and shaped per platform (see hashtags.py)."""
     src = source_line(a)
     spot = bool(draft.get("spotlight"))
-    cat_tag = _tag(a.get("category") or "")
-    topic = [_tag(t) for t in draft.get("hashtags", [])]
-    state = a.get("state") or "National"
-    state_tag = [] if state == "National" else [_tag(state)]
-    threads = shorten(draft["threads"], 400) + (f"\n\nLess-covered story · via {src}" if spot else f"\n\nvia {src}")
-    if topic:
-        threads += f"\n\n{topic[0]}"
-    facebook = (shorten(draft["facebook"], 700)
-                + (f"\n\nSource: {src} (a specialist or regional report that the big national outlets have not yet carried)"
-                   if spot else f"\n\nSource: {src}")
-                + "\n" + " ".join(["#India", cat_tag] + topic[:1]))
-    ig_tags = list(dict.fromkeys(topic[:2] + state_tag + [cat_tag, "#India"]))[:5]  # Meta: keep to <=5
-    instagram = (shorten(draft["instagram"], 1000)
-                 + f"\n\nSource: {src}. Read the full story at the original publisher.\n\n"
-                 + " ".join(ig_tags))
-    if draft.get("careful"):
-        note = f"Reported by {src}. Allegations are not proven unless a court says so."
-        facebook = facebook.replace("\n#India", f"\n\n{note}\n#India", 1) if "\n#India" in facebook else facebook + f"\n\n{note}"
-        instagram = instagram.replace("\n\n#", f"\n\n{note}\n\n#", 1) if "\n\n#" in instagram else instagram + f"\n\n{note}"
+    tags = hashtags.for_platforms(draft, a)
+    body = {k: hashtags.strip_inline(draft.get(k) or "") for k in ("threads", "facebook", "instagram")}
     credit = draft.get("photo_credit")
-    if credit:  # licence terms: credit the photographer wherever the photo appears
-        line = f"\n\nRepresentative image. Photo: {credit}"
-        facebook = facebook.replace("\n#India", line + "\n#India", 1) if "\n#India" in facebook else facebook + line
-        instagram = instagram.replace("\n\n#", line + "\n\n#", 1) if "\n\n#" in instagram else instagram + line
-        if len(threads) + len(f"\nPhoto: {credit}") <= 490:
-            threads += f"\nPhoto: {credit}"
+    careful_note = (f"Reported by {src}. Allegations are not proven unless a court says so."
+                    if draft.get("careful") else "")
+
+    # Threads: 500 characters in total, so the tail (source, credit, tag) is reserved first.
+    tail = ("Less-covered story · via " if spot else "via ") + src
+    if credit and len(tail) + len(credit) + 40 < 300:
+        tail += f"\nPhoto: {credit}"
+    tail += "\n\n" + " ".join(tags["threads"])
+    threads = shorten(body["threads"], 486 - len(tail)) + "\n\n" + tail
+
+    fb_source = (f"Source: {src} (a specialist or regional report that the big national outlets have not yet carried)"
+                 if spot else f"Source: {src}")
+    facebook = "\n\n".join(x for x in (
+        shorten(body["facebook"], 700), fb_source, careful_note,
+        f"Representative image. Photo: {credit}" if credit else "", " ".join(tags["facebook"])) if x)
+
+    instagram = "\n\n".join(x for x in (
+        shorten(body["instagram"], 1000), f"Source: {src}. Read the full story at the original publisher.",
+        careful_note, f"Representative image. Photo: {credit}" if credit else "", " ".join(tags["instagram"])) if x)
     return {"threads": threads[:490], "facebook": facebook, "instagram": instagram[:2100]}
 
 

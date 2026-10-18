@@ -547,3 +547,63 @@ def test_threads_posts_to_me_not_to_a_possibly_wrong_id(monkeypatch):
 
 def test_token_error_hint_mentions_fbtoken():
     assert "/fbtoken" in meta.explain_error("x: HTTP 400 code=190 sub=463 Session has expired")
+
+
+# ---- hashtags and platform checks -------------------------------------------------------------
+from newsbot import hashtags  # noqa: E402
+
+
+def test_hashtag_string_is_never_split_into_letters():
+    # Regression: the AI returned "durga puja kolkata" as one string and the posts ended with "#D #U ..."
+    tags = hashtags.normalize("durga puja, kolkata stampede")
+    assert tags == ["DurgaPuja", "KolkataStampede"]
+    assert all(len(t) > 2 for t in hashtags.normalize("durga puja kolkata"))
+    assert hashtags.normalize(["x", "D", "12345", "viral", "news"]) == []
+
+
+def test_every_platform_always_gets_hashtags():
+    a = {"state": "National", "category": "Courts"}
+    for draft in ({}, {"hashtags": None}, {"hashtags": ""}, {"hashtags": ["a"]}):
+        t = hashtags.for_platforms(draft, a)
+        assert len(t["threads"]) == 1 and len(t["facebook"]) == 3 and len(t["instagram"]) >= 3, (draft, t)
+
+
+def test_platform_limits_and_careful_tags():
+    draft = {"hashtags": ["Durga Puja", "Kolkata stampede", "crowd safety", "Puja pandal", "Kolkata Police"]}
+    a = {"state": "West Bengal", "category": "Weather & Disaster"}
+    t = hashtags.for_platforms(draft, a)
+    assert len(t["instagram"]) == 5 and len(t["threads"]) == 1 and len(t["facebook"]) == 3
+    assert "#IndiaInShort" in t["instagram"] and "#IndiaNews" in t["instagram"] and "#WestBengal" in t["instagram"]
+    careful = hashtags.for_platforms({**draft, "careful": True}, a)
+    assert "#IndiaInShort" not in careful["instagram"] and "#Weather" not in careful["instagram"]
+    assert "#WestBengal" in careful["instagram"]
+
+
+def test_inline_hashtags_are_stripped_and_tags_always_fit_on_threads():
+    a = {"state": "Assam", "category": "Health", "sources": [{"name": "The Hindu"}], "source": "The Hindu"}
+    draft = {"threads": "Outbreak spreads #health #viral " + "x " * 400, "facebook": "f #a", "instagram": "i #b #c",
+             "hashtags": ["Nipah virus", "Kerala"]}
+    t = pipeline.build_texts(draft, a)
+    assert "#health" not in t["threads"] and "#viral" not in t["threads"]
+    assert len(t["threads"]) <= 490 and t["threads"].strip().split("\n")[-1].startswith("#NipahVirus")
+    assert "#a" not in t["facebook"].split() and "#b" not in t["instagram"].split()
+
+
+def test_engagement_bait_shouting_and_emoji_checks():
+    facts = "Officials said on Monday the bridge reopened."
+    ok = {"threads": "Officials said the bridge reopened.", "facebook": "Officials said the bridge reopened.",
+          "instagram": "Officials said the bridge reopened.", "card_headline": "Bridge reopens"}
+    assert safety.check_draft(ok, facts) == []
+    for bad_text, needle in (("Share this with your friends! Officials said the bridge reopened.", "engagement bait"),
+                             ("Tag a friend. Officials said the bridge reopened.", "engagement bait"),
+                             ("Follow us for more. Officials said the bridge reopened.", "engagement bait"),
+                             ("BRIDGE REOPENED TODAY after Officials said it.", "shouting"),
+                             ("Officials said the bridge reopened 🎉🎉🎉🔥", "emoji")):
+        d = {**ok, "threads": bad_text}
+        assert any(needle in i for i in safety.check_draft(d, facts + " BRIDGE REOPENED TODAY")), bad_text
+
+
+def test_careful_stories_reject_emotive_wording():
+    d = {"threads": "Police said a tragic stampede killed 19.", "facebook": "Police said 19 died.",
+         "instagram": "Police said 19 died."}
+    assert any("emotive" in i for i in safety.careful_issues(d, ""))
