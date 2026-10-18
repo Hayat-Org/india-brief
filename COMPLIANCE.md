@@ -90,3 +90,15 @@
 - Facebook unoriginal-content policy: [Bitdefender summary](https://www.bitdefender.com/en-us/blog/hotforsecurity/facebooks-crackdown-on-reposted-content-what-creators-need-to-know)
 - Instagram publishing limits, carousels, alt text: [Meta developer docs](https://developers.facebook.com/docs/instagram-platform/content-publishing)
 - Google News RSS: [2010 article](https://www.fullpress.it/en/rss-feed-google-news-illegal-commercial-republication/) (old; current terms unverified)
+
+## Update 18 Oct: sensitive topics are covered, not skipped
+
+Only one hard stop remains: the legal election blackout (RP Act s.126/126A), driven by `ELECTION_SILENCE` dates.
+Everything previously blocked is now drafted in careful mode with topic rules (`safety.TOPIC_RULES`):
+sexual offence / minors (no identity, no locality detail, no accused name before conviction; BNS s.72, POCSO s.23, JJ Act s.74),
+suicide (no method; Tele-MANAS 14416 added), communal violence (official facts only, no community labels),
+pending cases (what the court did, no merits), polls (declared results only). Cap: `MAX_CAREFUL_PER_DAY` (4).
+Posts show `Source: <short url>` instead of the outlet name; body text states facts directly (no "according to").
+The image carries only headline and brand; photo credit (needed for CC BY) stays in the caption.
+Residual risk: dropping outlet attribution from the text shifts defamation exposure onto the page for allegations;
+keep "police said / alleged" wording and consult a lawyer.

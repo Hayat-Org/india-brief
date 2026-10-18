@@ -125,17 +125,9 @@ def render_card(headline: str, category: str, source: str, state: str = "Nationa
 
     # Footer
     d.line([pad, 1120, W - pad, 1120], fill="#2B3A5C", width=3)
-    d.text((pad, 1150), f"Source: {source}", font=_font(36), fill="#E8EEF9")
-    d.text((pad, 1210), "Read the full story at the original publisher", font=_font(28, False),
-           fill="#9FB3D1")
-    d.text((pad, 1275), config.BRAND_HANDLE, font=_font(30), fill=accent)
-    d.text((W - pad, 1277), "AI-assisted summary", font=_font(26, False), fill="#7F93B5", anchor="ra")
-    if photo is not None:
-        credit = f"Representative image · Photo: {photo_credit}"
-        f = _font(22, False)
-        while d.textlength(credit, font=f) > W - 2 * pad and len(credit) > 30:
-            credit = credit[:-4] + "…"
-        d.text((pad, 1318), credit, font=f, fill="#C5D2E8")
+    # The image carries only the headline and the brand. Source link, photo credit and the
+    # representative-image note live in the caption (see pipeline.build_texts).
+    d.text((pad, 1200), config.BRAND_HANDLE, font=_font(38), fill=accent)
 
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=88, optimize=True)

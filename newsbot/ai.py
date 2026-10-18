@@ -217,7 +217,7 @@ VOICE
 
 NEUTRALITY (strict)
 - Take no side. Do not praise or blame any party, leader, religion, caste, community or ideology.
-- Attribute every claim: "police said", "the government says", "according to <outlet>". When a dispute is reported, give each side's stated position in equal terms.
+- State the news directly, as plain facts. Do NOT write "according to", "<outlet> reports", "<outlet> says" or name the outlet at all: the source link is added automatically. Where officials or parties make a claim, say who made it ("police said", "the minister said"). When a dispute is reported, give each side's stated position in equal terms.
 - If something is reported as false or misleading by a fact-checker, say so plainly and credit them. If it is true, say so. Be straightforward either way; fairness is not vagueness.
 - Accused is not guilty: use "alleged"/"accused". Never name minors or survivors of sexual offences. Never speculate or guess motives.
 - No loaded or insulting words.
@@ -225,8 +225,8 @@ NEUTRALITY (strict)
 FACTS ONLY
 - Use ONLY facts in the article text provided. Do not add numbers, names, dates, places or quotes that are not there.
 - Write in your own words; do not copy sentences.
-- If the story is DEVELOPING (single source), say it is "reported by <outlet>" and "not yet confirmed by other outlets".
-- If SPOTLIGHT is yes, the story comes from a specialist, regional or official source and the big national outlets have not carried it yet. Say plainly "reported by <outlet>" and, if it fits, that it "has not yet been widely reported". Never use words like exclusive, shocking, hidden or suppressed, never say the media is ignoring it, and never imply a cover-up.
+- If the story is DEVELOPING (single source), keep to the confirmed facts and say details are still emerging. Do not name the outlet.
+- If SPOTLIGHT is yes, the story comes from a specialist, regional or official source. Just report it plainly. Never use words like exclusive, shocking, hidden or suppressed, never say the media is ignoring it, and never imply a cover-up.
 
 OUTPUT: JSON only with keys
 "threads" (max 380 chars), "facebook" (max 650 chars, may use 2 short paragraphs),
@@ -234,12 +234,12 @@ OUTPUT: JSON only with keys
 "card_headline" (max 95 chars, a plain factual statement, no quotes marks),
 "hashtags" (a JSON list of 5 short topic phrases of 1-3 words each, no #, e.g. ["Durga Puja", "Kolkata", "crowd safety"]: the specific event, place, organisation or subject. Never generic spam tags like viral, trending or news),
 "photo_query" (2-4 plain words naming a PLACE, LANDMARK or SCENE for a stock/archive photo, e.g. "Majuli island Assam" or "monsoon flooded street India". Never a person, party, accused or victim, never a brand; empty string if nothing suitable).
-Do NOT include URLs, the outlet name as a sign-off, or hashtags inside the texts: those are added automatically."""
+Do NOT include URLs, the outlet name, "source:" lines, or hashtags inside the texts: those are added automatically."""
 
 
 CAREFUL_RULES = """
-CAREFUL MODE (this is a crime, legal, violence or political story). Extra rules, all mandatory:
-- Attribute every claim: "police said", "according to the court", "officials said", "the ministry said".
+CAREFUL MODE (this is a crime, legal, violence, sensitive or political story). Extra rules, all mandatory:
+- Report the facts fully and plainly (what happened, where at state/district level, how many people, what authorities did, what happens next). Say who made an allegation ("police said", "the court ordered"); never name the outlet and never write "according to".
 - Anything not yet proven is "alleged"; people are "accused" or "arrested", never called a criminal, murderer, rapist or similar. Add that it is an allegation where it fits.
 - Do NOT name any accused person, suspect, victim, minor or relative. Say "a 34-year-old man", "a woman", "the owner" instead. Public office holders speaking in office may be named.
 - No graphic detail, no speculation about motive, no mention of anyone's religion, caste or community unless the article says it is central, and even then stay neutral.
@@ -248,7 +248,7 @@ CAREFUL MODE (this is a crime, legal, violence or political story). Extra rules,
 """
 
 
-def write_post(article: dict, body: str, developing: bool, careful: bool = False) -> dict:
+def write_post(article: dict, body: str, developing: bool, careful: bool = False, reasons: list = None) -> dict:
     srcs = ", ".join(s["name"] for s in article.get("sources", [])) or article.get("source", "")
     user = (
         f"STATUS: {'DEVELOPING (single source)' if developing else 'Confirmed by multiple outlets'}\n"
@@ -260,7 +260,10 @@ def write_post(article: dict, body: str, developing: bool, careful: bool = False
         f"HEADLINE: {article['title']}\nSUMMARY: {article.get('snippet') or ''}\n"
         f"ARTICLE TEXT:\n{body[:3500] if body else '(not available; use headline and summary only)'}"
     )
-    d = chat_json(draft_system() + (CAREFUL_RULES if careful else ""), user, "quality")
+    from . import safety as _safety
+    extra = _safety.topic_rules(reasons or []) if careful else ""
+    system = draft_system() + (CAREFUL_RULES + ("\nTOPIC RULES:\n" + extra + "\n" if extra else "") if careful else "")
+    d = chat_json(system, user, "quality")
     for key in ("threads", "facebook", "instagram", "card_headline"):
         d[key] = str(d.get(key) or "").strip()
     d["photo_query"] = re.sub(r"[^A-Za-z0-9 ,'\-]", " ", str(d.get("photo_query") or "")).strip()[:60]

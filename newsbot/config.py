@@ -79,7 +79,7 @@ CRITICAL_BONUS = _float("CRITICAL_BONUS", 0.5)      # significance >= 8
 IMPORTANT_BONUS = _float("IMPORTANT_BONUS", 0.3)    # impact >= 8
 TREND_BONUS = _float("TREND_BONUS", 0.6)            # matches a trending search in India
 TREND_BONUS_BIG = _float("TREND_BONUS_BIG", 1.0)    # ...with 100K+ searches
-MAX_CAREFUL_PER_DAY = _int("MAX_CAREFUL_PER_DAY", 2)  # crime/violence/legal stories posted under the strict rules
+MAX_CAREFUL_PER_DAY = _int("MAX_CAREFUL_PER_DAY", 4)  # crime/violence/legal stories posted under the strict rules
 MAX_POLITICS_PER_DAY = _int("MAX_POLITICS_PER_DAY", 2)  # keeps the feed balanced
 USE_GOOGLE_NEWS = env("USE_GOOGLE_NEWS", "1") == "1"
 ATTACH_LINKS = env("ATTACH_LINKS", "1") == "1"  # link to the original on Facebook/Threads

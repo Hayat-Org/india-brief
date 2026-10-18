@@ -201,7 +201,7 @@ def test_build_texts_limits_and_credit():
     draft = {"threads": "x" * 600, "facebook": "y" * 900, "instagram": "z" * 1500,
              "hashtags": ["assamfloods"]}
     t = pipeline.build_texts(draft, a)
-    assert len(t["threads"]) <= 490 and "via The Hindu, NDTV" in t["threads"]
+    assert len(t["threads"]) <= 490 and "Source: The Hindu, NDTV" in t["threads"]
     assert "Source: The Hindu, NDTV" in t["facebook"]
     last = t["instagram"].split("\n")[-1]
     assert "#Assam" in last and "#IndiaNews" in last and "#IndiaInShort" in last and last.count("#") == 5

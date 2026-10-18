@@ -357,9 +357,10 @@ TWO = [{"name": "The Hindu", "url": "u", "kind": "news"}, {"name": "NDTV", "url"
 
 
 def test_classify_tiers():
-    assert safety.classify("Rape accused held in Delhi", category="Crime & Law")[0] == "blocked"
-    assert safety.classify("Communal clash in town", category="Society")[0] == "blocked"
-    assert safety.classify("Exit polls predict result", category="Politics")[0] == "blocked"
+    assert safety.classify("Rape accused held in Delhi", category="Crime & Law")[0] == "careful"
+    assert "sexual offence" in safety.classify("Rape accused held in Delhi", category="Crime & Law")[1]
+    assert safety.classify("Communal clash in town", category="Society")[0] == "careful"
+    assert safety.classify("Exit polls predict result", category="Politics")[0] == "careful"
     assert safety.classify("Man arrested for theft in Pune", category="Crime & Law")[0] == "careful"
     assert safety.classify("Blast in market kills five", category="Weather & Disaster")[0] == "careful"
     assert safety.classify("Parliament passes bill", category="Politics")[0] == "careful"
@@ -380,7 +381,10 @@ def test_careful_issues():
     bad = {"threads": "The murderer was caught.", "facebook": "Police said accused Ramesh Kumar was held.",
            "instagram": "A man was arrested."}
     found = " ".join(safety.careful_issues(bad, ""))
-    assert "guilt label" in found and "names an accused" in found and "no attribution" in found
+    assert "guilt label" in found and "names an accused" in found and "no attribution" not in found
+    assert safety.careful_issues({"threads": "Student died by suicide; he hanged himself.", "facebook": "x", "instagram": "x",
+                                  "careful_reasons": ["suicide/self-harm"]}, "")
+    assert "Tele-MANAS" in safety.HELPLINE_NOTE and "14416" in safety.HELPLINE_NOTE
     assert not any("guilt label" in i for i in safety.careful_issues(
         {"threads": "The court said the killer was sentenced.", "facebook": "Police said x", "instagram": "Police said x"},
         "He was convicted and sentenced."))
@@ -389,7 +393,7 @@ def test_careful_issues():
 def test_careful_story_posts_with_strong_source_and_neutral_note(env, monkeypatch):
     db = FakeDB()
     seen = {}
-    monkeypatch.setattr(ai, "write_post", lambda a, b, d, careful=False: seen.update(careful=careful) or {
+    monkeypatch.setattr(ai, "write_post", lambda a, b, d, careful=False, reasons=None: seen.update(careful=careful) or {
         "threads": "Police said a man was arrested in Pune after a theft complaint.",
         "facebook": "Police said a man was arrested in Pune after a theft complaint.",
         "instagram": "Police said a man was arrested in Pune after a theft complaint.",
@@ -426,12 +430,52 @@ def test_careful_daily_cap_defers(env, monkeypatch):
     assert db.get_article(row["id"])["status"] == "candidate"
 
 
-def test_blocked_story_never_drafted(env, monkeypatch):
+def test_election_blackout_story_is_never_drafted(env, monkeypatch):
     db = FakeDB()
+    monkeypatch.setattr(config, "ELECTION_SILENCE", [["2000-01-01", "2999-12-31"]])
     monkeypatch.setattr(ai, "write_post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not draft")))
-    row = add_candidate(db, "Rape accused held in Delhi", category="Crime & Law", kind="news", sources_=TWO)
+    row = add_candidate(db, "Parliament passes bill", category="Politics", kind="news", sources_=TWO)
     assert pipeline.process_candidate(db, db.get_article(row["id"])) == "skipped_safety"
     assert db.get_article(row["id"])["hold_reason"].startswith("blocked")
+
+
+def test_sexual_offence_story_is_drafted_carefully_with_topic_rules(env, monkeypatch):
+    db = FakeDB()
+    seen = {}
+    monkeypatch.setattr(ai, "write_post", lambda a, b, d, careful=False, reasons=None: seen.update(r=reasons) or {
+        "threads": "Police said a man was arrested in Delhi on a complaint of sexual assault.",
+        "facebook": "Police said a man was arrested in Delhi on a complaint of sexual assault.",
+        "instagram": "Police said a man was arrested in Delhi on a complaint of sexual assault.",
+        "card_headline": "Arrest made in Delhi sexual assault case", "hashtags": [], "photo_query": ""})
+    monkeypatch.setattr(meta, "post_facebook", lambda t, l=None, image_url=None: "f-1")
+    row = add_candidate(db, "Sexual assault accused held in Delhi", category="Crime & Law", kind="news", sources_=TWO)
+    db.update_article(row["id"], {"corroboration": 2, "snippet": "Police said a man was arrested in Delhi on a complaint of sexual assault."})
+    monkeypatch.setattr(media, "fetch_text", lambda u: "Police said a man was arrested in Delhi on a complaint of sexual assault.")
+    assert pipeline.process_candidate(db, db.get_article(row["id"])) == "published"
+    assert "sexual offence" in seen["r"] and "survivor" in safety.topic_rules(seen["r"])
+
+
+def test_suicide_story_gets_helpline_and_source_url_not_outlet_name():
+    d = {"threads": "A student died in Kota.", "facebook": "A student died in Kota.", "instagram": "A student died in Kota.",
+         "hashtags": ["Kota"], "careful": True, "careful_reasons": ["suicide/self-harm"], "short_url": "https://is.gd/abc123"}
+    a = {"category": "Education", "state": "Rajasthan", "sources": [{"name": "The Hindu"}], "source": "The Hindu"}
+    t = pipeline.build_texts(d, a)
+    for k in ("threads", "facebook", "instagram"):
+        assert "Source: https://is.gd/abc123" in t[k] and "The Hindu" not in t[k]
+    assert "14416" in t["facebook"] and "14416" in t["threads"]
+
+
+def test_card_image_has_no_source_ai_or_credit_lines():
+    from newsbot import cards
+    import inspect
+    src = inspect.getsource(cards.render_card)
+    assert "Read the full story" not in src and "AI-assisted" not in src and "Representative image" not in src
+    assert 'f"Source: {source}"' not in src
+
+
+def test_google_wrapper_urls_are_not_used_as_source_link():
+    assert media.short_url("https://news.google.com/rss/articles/CBMi0AFBVV95") == ""
+    assert media.clean_url("https://x.com/a?utm_source=f&id=3#top") == "https://x.com/a?id=3"
 
 
 def test_undated_feed_items_are_skipped(monkeypatch):

@@ -34,8 +34,37 @@ SENSITIVE_PATTERNS = [
 _SENSITIVE = [(re.compile(p, re.I), reason) for p, reason in SENSITIVE_PATTERNS]
 
 # Reasons (from SENSITIVE_PATTERNS) that are blocked outright. Everything else that matches is "careful".
-BLOCKED_REASONS = {"communal/mob violence", "sexual offence", "minor involved", "suicide/self-harm",
-                   "religious flashpoint", "legal risk", "election poll publication rules"}
+# Only the legally binding election blackout is a hard stop (RP Act s.126/126A). Every other
+# sensitive topic is drafted in careful mode with topic-specific rules (see topic_rules).
+BLOCKED_REASONS = {"election-silence window"}
+
+TOPIC_RULES = {
+    "sexual offence": "SEXUAL OFFENCE: never name or hint at the survivor (no family, school, college, village, colony, "
+                      "workplace, photo or relationship). Name at most the state or district. Do not name the accused unless "
+                      "convicted. No graphic detail. Report only the official step (arrest, FIR, court order, new law).",
+    "minor involved": "MINOR: never name or identify a child, a child in conflict with law, or their family or school. "
+                      "No photos. Name at most the state or district.",
+    "suicide/self-harm": "SUICIDE: no method, place, note contents or sensational wording; do not call it a solution or a "
+                         "reaction. Report the verified fact and any official step (inquiry, policy). A helpline line is added automatically.",
+    "communal/mob violence": "COMMUNAL/MOB VIOLENCE: facts only: what happened, number hurt, what the police/administration did "
+                             "(curfew, arrests, appeals for calm). Do not name or generalise about any religion, caste or community "
+                             "unless an official statement does, and then quote the neutral fact only. No blame, no speculation.",
+    "religious flashpoint": "RELIGIOUS SENSITIVITY: report the official action or court order in plain words. Do not characterise any "
+                            "faith or group and use no emotive adjectives.",
+    "legal risk": "PENDING CASE: report what the court or agency did or ordered, with dates. No comment on guilt, innocence or the "
+                  "merits, and no prediction of outcome.",
+    "election poll publication rules": "ELECTION POLLS: report only declared or counted results and official statements. Do not "
+                                       "present an exit poll or opinion poll as a forecast.",
+    "election conduct": "ELECTION CONDUCT: report the Election Commission's action neutrally, with no praise or blame for any party.",
+}
+
+SUICIDE_METHODS = re.compile(r"\b(hang(ed|ing)|poison(ed|ing)?|jump(ed|ing)? (off|from)|overdose|slit|noose|"
+                             r"drank|consum(ed|ing) pesticide|self-immolat)\b", re.I)
+HELPLINE_NOTE = "If you or someone you know needs support in India, call Tele-MANAS: 14416 (free, 24x7)."
+
+
+def topic_rules(reasons: list) -> str:
+    return "\n".join("- " + TOPIC_RULES[r] for r in reasons if r in TOPIC_RULES)
 
 # Loaded, name-calling or dehumanising terms. A neutral desk should never write these itself.
 LOADED_TERMS = re.compile(
@@ -68,6 +97,9 @@ ALLOWED_CAPS = {
     "Court", "High", "Prime", "Minister", "Chief", "Police", "Delhi", "The", "This", "That",
     "According", "Here", "What", "Why", "How", "When", "Who", "Also", "But", "And", "For",
     "Not", "No", "Yes", "Meanwhile", "However", "Officials", "Reuters", "Source", "Sources",
+    "January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+    "November", "December", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "Rs", "Lok", "Sabha", "Rajya", "Assembly", "Parliament", "Congress", "Bureau", "Commission",
 }
 
 
@@ -85,9 +117,10 @@ def classify(title: str, snippet: str = "", body: str = "", category: str = "", 
     blocked, careful = [], []
     head = f"{title} {snippet}"
     for pattern, reason in _SENSITIVE:
-        if pattern.search(head) or (reason in BLOCKED_REASONS and pattern.search((body or "")[:1500])):
+        if pattern.search(head) or (reason in TOPIC_RULES and pattern.search((body or "")[:1500])):
             (blocked if reason in BLOCKED_REASONS else careful).append(reason)
-    if in_election_silence(now) and category in ("Politics", "Government & Policy"):
+    if in_election_silence(now) and (category in ("Politics", "Government & Policy")
+                                     or "election poll publication rules" in careful):
         blocked.append("election-silence window")
     if blocked:
         return "blocked", list(dict.fromkeys(blocked))
@@ -119,8 +152,8 @@ def careful_issues(draft: dict, facts_text: str) -> list:
     issues = []
     for platform in ("threads", "facebook", "instagram"):
         text = draft.get(platform) or ""
-        if not ATTRIBUTION_CUE.search(text):
-            issues.append(f"{platform}: no attribution (police said / according to ...)")
+        if "suicide/self-harm" in (draft.get("careful_reasons") or []) and SUICIDE_METHODS.search(text):
+            issues.append(f"{platform}: describes a method (suicide reporting rule)")
         if GUILT_LABELS.search(text) and not CONVICTION_OK.search(facts_text or ""):
             issues.append(f"{platform}: presents an allegation as proven (guilt label)")
         if NAMED_ACCUSED.search(text):
@@ -145,7 +178,7 @@ def _numbers(text: str) -> set:
     return out
 
 
-def check_draft(draft: dict, facts_text: str, now: datetime = None) -> list:
+def check_draft(draft: dict, facts_text: str, now: datetime = None, thin: bool = False) -> list:
     """Return a list of problems. Empty list = draft passes the facts-only check."""
     issues = []
     now = now or datetime.now(timezone.utc)
@@ -174,12 +207,18 @@ def check_draft(draft: dict, facts_text: str, now: datetime = None) -> list:
             if n not in facts_nums and n not in years_ok:
                 issues.append(f"{platform}: number '{n}' not found in source")
         # Proper nouns: ignore the first word of each sentence
+        unknown = []
         for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
             words = re.findall(r"[A-Za-z][A-Za-z'’-]*", sentence)
             for w in words[1:]:
                 if w[0].isupper() and len(w) > 2 and w not in ALLOWED_CAPS \
                         and w.lower() not in facts_lower:
-                    issues.append(f"{platform}: name '{w}' not found in source")
+                    unknown.append(w)
+        # With only a headline and summary to check against, one stray capitalised word is tolerated;
+        # numbers are always checked strictly.
+        if len(set(unknown)) > (1 if thin else 0):
+            for w in dict.fromkeys(unknown):
+                issues.append(f"{platform}: name '{w}' not found in source")
     headline = draft.get("card_headline", "")
     for n in _numbers(headline):
         if n not in facts_nums and n not in years_ok:

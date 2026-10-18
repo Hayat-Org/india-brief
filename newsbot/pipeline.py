@@ -421,28 +421,31 @@ def build_texts(draft: dict, a: dict) -> dict:
     """Final text for each platform. Hashtags are mandatory and shaped per platform (see hashtags.py)."""
     src = source_line(a)
     spot = bool(draft.get("spotlight"))
+    ref = draft.get("short_url") or src          # a short link to the publisher's page, else the outlet name
+    reasons = draft.get("careful_reasons") or []
+    helpline = safety.HELPLINE_NOTE if "suicide/self-harm" in reasons else ""
     tags = hashtags.for_platforms(draft, a)
     body = {k: hashtags.strip_inline(draft.get(k) or "") for k in ("threads", "facebook", "instagram")}
     credit = draft.get("photo_credit")
-    careful_note = (f"Reported by {src}. Allegations are not proven unless a court says so."
-                    if draft.get("careful") else "")
+    careful_note = ("Allegations are not proven unless a court says so." if draft.get("careful") else "")
+    photo_note = f"Representative photo: {credit}" if credit else ""
 
     # Threads: 500 characters in total, so the tail (source, credit, tag) is reserved first.
-    tail = ("Less-covered story · via " if spot else "via ") + src
+    tail = f"Source: {ref}"
+    if helpline:
+        tail = helpline + "\n" + tail
     if credit and len(tail) + len(credit) + 40 < 300:
         tail += f"\nPhoto: {credit}"
     tail += "\n\n" + " ".join(tags["threads"])
     threads = shorten(body["threads"], 486 - len(tail)) + "\n\n" + tail
 
-    fb_source = (f"Source: {src} (a specialist or regional report that the big national outlets have not yet carried)"
-                 if spot else f"Source: {src}")
     facebook = "\n\n".join(x for x in (
-        shorten(body["facebook"], 700), fb_source, careful_note,
-        f"Representative image. Photo: {credit}" if credit else "", " ".join(tags["facebook"])) if x)
+        shorten(body["facebook"], 700), careful_note, helpline, f"Source: {ref}", photo_note,
+        " ".join(tags["facebook"])) if x)
 
     instagram = "\n\n".join(x for x in (
-        shorten(body["instagram"], 1000), f"Source: {src}. Read the full story at the original publisher.",
-        careful_note, f"Representative image. Photo: {credit}" if credit else "", " ".join(tags["instagram"])) if x)
+        shorten(body["instagram"], 1000), careful_note, helpline, f"Source: {ref}", photo_note,
+        " ".join(tags["instagram"])) if x)
     return {"threads": threads[:490], "facebook": facebook, "instagram": instagram[:2100]}
 
 
@@ -496,6 +499,8 @@ def publish_article(db, a: dict, only: list = None) -> str:
     else:
         texts = build_texts(draft, a)
         link = (draft.get("link") or a["url"]) if config.ATTACH_LINKS else None
+        if draft.get("short_url"):
+            link = None            # the short source link is already in the caption
     alt = f"{draft.get('card_headline') or a['title']}. Source: {source_line(a)}"
     image = draft["slides"][0] if is_digest and draft.get("slides") else a.get("card_url")  # every post carries a picture
     platforms = config.enabled_platforms()
@@ -586,6 +591,7 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
     spotlight = bool(a.get("spotlight"))
     link = media.resolve_url(a["url"])
     body = media.fetch_text(link)
+    short = media.short_url(link)
     developing = (a.get("corroboration") or 1) < 2 and a.get("source_kind") not in ("govt", "factcheck")
     facts = f"{a['title']}\n{a.get('snippet') or ''}\n{body}"
 
@@ -593,8 +599,9 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
                                          bool(a.get("sensitive")), a.get("sensitive_reason") or "")
     careful = tier == "careful"
     if tier == "blocked" and mode == "auto":
+        # Only the legal election blackout (RP Act s.126/126A, dates set in ELECTION_SILENCE) lands here.
         db.update_article(a["id"], {"status": "discarded", "hold_reason": "blocked: " + "; ".join(tier_reasons)})
-        runlog.note(f"{tag} → not posted, blocked by law/policy: {'; '.join(tier_reasons)}")
+        runlog.note(f"{tag} → held back by law: {'; '.join(tier_reasons)}")
         return "skipped_safety"
     if careful and mode == "auto":
         strong = (a.get("corroboration") or 1) >= 2 or a.get("source_kind") in ("govt", "factcheck")
@@ -606,10 +613,11 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
             runlog.note(f"{tag} → deferred: today's limit of {config.MAX_CAREFUL_PER_DAY} crime/violence/legal posts is used")
             return "deferred"
 
-    kw = {"careful": True} if careful else {}
+    kw = {"careful": True, "reasons": tier_reasons} if careful else {}
 
     def check(d):
-        found = safety.check_draft(d, facts)
+        d = {**d, "careful_reasons": tier_reasons}
+        found = safety.check_draft(d, facts, thin=not body)
         return found + (safety.careful_issues(d, facts) if careful else [])
 
     try:
@@ -632,6 +640,7 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
         return "draft_failed"
 
     draft["link"], draft["developing"], draft["spotlight"] = link, developing, spotlight
+    draft["short_url"] = short
     draft["careful"], draft["careful_reasons"] = careful, tier_reasons
     flags, hold = [], []
     if tier == "blocked":
@@ -947,7 +956,7 @@ def handle_message(db, msg: dict) -> str:
     elif cmd == "/auto":
         db.set_setting("mode2", "auto")
         telegram.send_text("Auto mode ON: clean stories post by themselves. Stories that trip a safety rule "
-                           "(sensitive topic, crime, election silence, facts check) are skipped, never posted.")
+                           "(election blackout, failed fact or privacy checks) are skipped; sensitive topics are posted under strict careful rules.")
     elif cmd == "/fbtoken":
         token = parts[1] if len(parts) > 1 else ""
         telegram.delete_message((msg.get("chat") or {}).get("id"), msg.get("message_id"))  # the token is a secret
