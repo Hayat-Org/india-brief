@@ -4,8 +4,10 @@ Every job (ingest, publish, digest, health, poll) opens a RunLog, other modules 
 through the module-level helpers (no-ops when no run is open, so tests stay simple), and the
 job ends with `finish()` which sends one plain-text report and records a heartbeat.
 """
+import hashlib
 import json
 import os
+import re
 import time
 import traceback
 from datetime import datetime, timezone
@@ -13,6 +15,22 @@ from datetime import datetime, timezone
 from . import config, telegram
 
 _current = None
+REPEAT_QUIET_HOURS = 6  # an identical failure is reported once, then at most every 6 hours
+
+SECRET_ENV = ("SUPABASE_SERVICE_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "TELEGRAM_BOT_TOKEN", "THREADS_ACCESS_TOKEN",
+              "FB_PAGE_TOKEN", "IG_TOKEN", "PEXELS_API_KEY", "SUPABASE_URL")
+
+
+def redact(text: str) -> str:
+    """Remove secrets from text before it is shown anywhere."""
+    text = str(text)
+    for name in SECRET_ENV:
+        value = os.environ.get(name, "").strip()
+        if len(value) >= 6:
+            text = text.replace(value, f"<{name}>")
+    text = re.sub(r"bot\d{6,}:[A-Za-z0-9_-]{20,}", "bot<token>", text)
+    text = re.sub(r"(access_token|key|apikey|token)=[^&\s'\"]+", r"\1=<hidden>", text)
+    return text
 
 JOBS = ("ingest", "publish", "digest", "health", "poll")
 
@@ -39,7 +57,7 @@ class RunLog:
         self.activity = True
 
     def crash(self) -> None:
-        self.error("Job crashed:\n" + traceback.format_exc()[-1200:])
+        self.error("Job crashed:\n" + redact(traceback.format_exc())[-1500:])
 
     # --- rendering --------------------------------------------------------
     @staticmethod
@@ -70,6 +88,25 @@ class RunLog:
             out += ["", f"❌ Errors ({len(self.errors)})"] + [f"• {e}" for e in self.errors[:10]]
         return "\n".join(out).strip()
 
+    def signature(self) -> str:
+        first = re.sub(r"\d+", "#", (self.errors[0] if self.errors else "")[:200])
+        return hashlib.md5(first.encode()).hexdigest()[:10]
+
+    def is_repeat(self, db) -> bool:
+        """True when the same error was already reported to you in the last few hours."""
+        if not self.errors or db is None:
+            return False
+        try:
+            prev = json.loads(db.get_setting(f"lasterr_{self.job}", "") or "{}")
+            fresh = prev.get("sig") == self.signature() and \
+                (datetime.now(timezone.utc) - datetime.fromisoformat(prev["at"])).total_seconds() < REPEAT_QUIET_HOURS * 3600
+            if not fresh:
+                db.set_setting(f"lasterr_{self.job}", json.dumps(
+                    {"sig": self.signature(), "at": datetime.now(timezone.utc).isoformat()}))
+            return bool(fresh)
+        except Exception:
+            return False
+
     def should_send(self) -> bool:
         if self.errors:
             return True
@@ -87,11 +124,18 @@ class RunLog:
         except Exception as ex:  # a heartbeat problem must never break the job
             print(f"heartbeat not saved: {str(ex)[:120]}")
         try:
-            print(self.render())  # also lands in the GitHub Actions log
-            if self.should_send():
-                telegram.send_text(self.render())
+            text = redact(self.render())
+            print(text)  # also lands in the GitHub Actions log
+            if self.errors and os.environ.get("GITHUB_ACTIONS"):  # lets the workflow's failure step know what happened
+                with open("crash_report.txt", "w") as f:
+                    f.write(text[-6000:])
+            if self.is_repeat(db) and not self.activity:
+                print("same error as the last report, not repeating it on Telegram")
+            elif self.should_send():
+                telegram.send_text(text)
+                open(".reported", "w").close()
         except Exception as ex:
-            print(f"report not sent: {str(ex)[:160]}")
+            print(f"report not sent: {redact(str(ex))[:160]}")
         if _current is self:
             _current = None
 

@@ -16,6 +16,9 @@ concurrency:
 
 jobs:
   health:
+    permissions:
+      contents: read
+      issues: write
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -59,8 +62,20 @@ jobs:
           TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          [ -f .reported ] && exit 0  # the job already told you itself
           [ -n "$TG_TOKEN" ] && curl -s -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
             --data-urlencode "chat_id=$TG_CHAT" \
             --data-urlencode "text=❌ GitHub run failed: ${{ github.workflow }}
           $RUN_URL
           Open the link, or run the 'Diagnose' workflow for a full check." > /dev/null || true
+      - name: Save the error log to a GitHub issue (secrets removed)
+        if: failure() && hashFiles('crash_report.txt') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N=$(gh issue list --state open --search "Run errors in:title" --json number --jq '.[0].number')
+          if [ -z "$N" ]; then
+            gh issue create --title "Run errors" --body "Automatic error log written by the bot. Secrets are removed. Safe to close." > issue.txt
+            N=$(grep -o '[0-9]*$' issue.txt)
+          fi
+          gh issue comment "$N" --body-file crash_report.txt
