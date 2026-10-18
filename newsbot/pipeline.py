@@ -260,6 +260,9 @@ def ingest(db, entries: list, now: datetime = None) -> dict:
             "published_at": iso(e.published), "status": "new",
         })
         known_urls.add(e.url)
+        if row is None:  # stored earlier than the 72h window we looked at
+            stats["dup"] += 1
+            continue
         recent.insert(0, row)
         stats["new"] += 1
         if e.kind in SPOTLIGHT_SOURCE_KINDS:

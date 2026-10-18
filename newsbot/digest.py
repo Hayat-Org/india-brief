@@ -59,6 +59,8 @@ def run_digest(db, now: datetime = None) -> str:
         "category": "Digest", "state": "National", "combined": 0,
         "status": "approved", "draft": draft, "card_url": slides[0],
     })
+    if row is None:
+        return "exists"
     if pipeline.get_mode(db) != "auto":
         telegram.send_review(row, draft, slides[0], [f"Digest of {len(top)} stories already posted today"])
         db.update_article(row["id"], {"status": "pending_review",

@@ -35,8 +35,12 @@ class DB:
             "limit": "1000",
         })
 
-    def insert_article(self, row: dict) -> dict:
-        return self._req("POST", "/articles", json=row, prefer="return=representation")[0]
+    def insert_article(self, row: dict):
+        """Insert a story. Returns the new row, or None when that URL is already stored
+        (the feeds keep offering old links, which must never crash a run)."""
+        rows = self._req("POST", "/articles", params={"on_conflict": "url"}, json=row,
+                         prefer="resolution=ignore-duplicates,return=representation")
+        return rows[0] if rows else None
 
     def update_article(self, article_id: int, values: dict) -> None:
         values = dict(values)

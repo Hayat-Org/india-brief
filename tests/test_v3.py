@@ -237,3 +237,12 @@ def test_poll_loop_handles_taps_and_saves_offset(env, monkeypatch):
     log = runlog.start("poll", "t", quiet_unless_activity=True)
     assert poll.handle_updates(db, log, 0) == 6
     assert db.get_setting("tg_offset") == "6" and log.activity
+
+
+def test_old_url_already_stored_does_not_crash_ingest(env):
+    db = FakeDB()
+    db.insert_article({"url": "https://a/old", "title": "Old", "title_norm": "old", "status": "discarded",
+                       "sources": [], "created_at": hours_ago(200)})
+    db.recent_articles = lambda hours=72: []  # the story is outside the 72h look-back window
+    stats = pipeline.ingest(db, [entry("Flood hits Assam, thousands evacuated", "https://a/old", "The Hindu")])
+    assert stats["new"] == 0 and stats["dup"] == 1

@@ -10,6 +10,8 @@ class FakeDB:
         return [dict(r) for r in sorted(self.rows.values(), key=lambda r: -r["id"])]
 
     def insert_article(self, row):
+        if any(r.get("url") == row.get("url") for r in self.rows.values()):
+            return None  # same as the real database: a duplicate URL is ignored
         self._id += 1
         full = {"id": self._id, "created_at": datetime.now(timezone.utc).isoformat(),
                 "attempts": 0, "corroboration": 1, **row}
