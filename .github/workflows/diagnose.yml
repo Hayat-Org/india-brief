@@ -5,6 +5,9 @@ on:
 
 jobs:
   diagnose:
+    permissions:
+      contents: read
+      issues: write
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -38,3 +41,10 @@ jobs:
           BRAND_HANDLE: ${{ secrets.BRAND_HANDLE }}
           USE_GOOGLE_NEWS: ${{ secrets.USE_GOOGLE_NEWS }}
           DEFAULT_MODE: ${{ secrets.DEFAULT_MODE }}
+      - name: Save the report to a GitHub issue (secrets removed)
+        if: always() && hashFiles('crash_report.txt') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N=$(gh issue list --state open --search "Run errors in:title" --json number --jq '.[0].number')
+          gh issue comment "$N" --body-file crash_report.txt
