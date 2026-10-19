@@ -488,6 +488,24 @@ def threads_token(db) -> str:
     return db.get_setting("threads_token", "") or config.THREADS_ACCESS_TOKEN
 
 
+def post_stories(a: dict, story_url: str) -> dict:
+    """Instagram and Facebook Stories. Never blocks or fails the feed post: problems are logged as warnings."""
+    out = {}
+    platforms = config.enabled_platforms()
+    for name, fn in (("instagram", meta.post_instagram_story), ("facebook", meta.post_facebook_story)):
+        if name not in platforms:
+            continue
+        try:
+            out[name] = {"ok": True, "id": fn(story_url)}
+        except Exception as ex:
+            out[name] = {"ok": False, "error": str(ex)[:200]}
+            runlog.warn(f"#{a['id']} {name} story: {str(ex)[:200]}")
+        time.sleep(2)
+    if out:
+        runlog.note(f"#{a['id']} stories → " + ", ".join(f"{k} {'✓' if v['ok'] else '✗'}" for k, v in out.items()))
+    return out
+
+
 def publish_article(db, a: dict, only: list = None) -> str:
     """Post to every configured platform independently; one failure never blocks the others.
     `only` limits the attempt to some platforms (used by Retry); earlier results are kept."""
@@ -535,6 +553,8 @@ def publish_article(db, a: dict, only: list = None) -> str:
     if ok and not a.get("posted_at"):
         update["posted_at"] = iso(now_utc())
     db.update_article(a["id"], update)
+    if ok and not only and not is_digest and draft.get("story_url") and config.STORIES and not config.DRY_RUN:
+        post_stories(a, draft["story_url"])
 
     lines = []
     for k, v in results.items():
@@ -669,6 +689,13 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
                              photo=photo["image"] if photo else None,
                              photo_credit=photo["credit"] if photo else "")
     card_url = media.upload_card(card, f"{a['id']}-{int(time.time())}.jpg")
+    if config.STORIES:
+        try:
+            story = cards.render_story(draft["card_headline"] or a["title"], a.get("category") or "",
+                                       a.get("state") or "National", photo["image"] if photo else None)
+            draft["story_url"] = media.upload_card(story, f"{a['id']}-story-{int(time.time())}.jpg")
+        except Exception as ex:
+            runlog.warn(f"{tag} → story image not made: {str(ex)[:120]}")
 
     update = {"draft": draft, "card_url": card_url, "breaking": breaking,
               "hold_reason": "; ".join(hold) or None}

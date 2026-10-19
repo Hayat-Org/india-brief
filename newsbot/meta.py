@@ -118,6 +118,24 @@ def post_instagram(caption: str, image_url: str, alt_text: str = "") -> str:
     return _ig_publish(container)
 
 
+def post_instagram_story(image_url: str) -> str:
+    """A 9:16 image Story (24 h). Needs the same instagram_content_publish permission as feed posts."""
+    container = _ig_create({"media_type": "STORIES", "image_url": image_url}, "instagram story container")
+    _wait_container(container)
+    return _ig_publish(container)
+
+
+def post_facebook_story(image_url: str) -> str:
+    """Facebook Page photo Story: upload the photo unpublished, then turn it into a Story."""
+    r = requests.post(f"{GRAPH}/{config.FB_PAGE_ID}/photos", timeout=60, data={
+        "url": image_url, "published": "false", "access_token": config.FB_PAGE_TOKEN})
+    photo_id = _check(r, "facebook story photo")["id"]
+    r = requests.post(f"{GRAPH}/{config.FB_PAGE_ID}/photo_stories", timeout=60, data={
+        "photo_id": photo_id, "access_token": config.FB_PAGE_TOKEN})
+    d = _check(r, "facebook story")
+    return str(d.get("post_id") or d.get("id") or d.get("success") or "ok")
+
+
 def post_instagram_carousel(caption: str, image_urls: list, alt_texts: list = None) -> str:
     """2-10 JPEG slides as one swipeable post (carousels count as one API post)."""
     children = []

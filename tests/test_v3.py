@@ -651,3 +651,21 @@ def test_careful_stories_reject_emotive_wording():
     d = {"threads": "Police said a tragic stampede killed 19.", "facebook": "Police said 19 died.",
          "instagram": "Police said 19 died."}
     assert any("emotive" in i for i in safety.careful_issues(d, ""))
+
+
+def test_story_card_is_vertical_and_clean():
+    from newsbot import cards
+    from PIL import Image
+    import io
+    img = Image.open(io.BytesIO(cards.render_story("Test headline for the story", "Economy & Business")))
+    assert img.size == (1080, 1920)
+
+
+def test_stories_never_block_feed_post(env, monkeypatch):
+    monkeypatch.setattr(config, "THREADS_USER_ID", "1")
+    monkeypatch.setattr(config, "FB_PAGE_ID", "p"); monkeypatch.setattr(config, "FB_PAGE_TOKEN", "t")
+    monkeypatch.setattr(config, "IG_USER_ID", "i"); monkeypatch.setattr(config, "IG_TOKEN", "t")
+    monkeypatch.setattr(meta, "post_instagram_story", lambda u: (_ for _ in ()).throw(RuntimeError("no permission")))
+    monkeypatch.setattr(meta, "post_facebook_story", lambda u: "fs-1")
+    out = pipeline.post_stories({"id": 1}, "https://x/y.jpg")
+    assert out["instagram"]["ok"] is False and out["facebook"]["ok"] is True

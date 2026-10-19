@@ -107,6 +107,7 @@ POLL_SECONDS = _int("POLL_SECONDS", 240)  # how long each approvals run keeps li
 
 # Photos: copyright-safe images only (Wikimedia Commons CC0/PD/CC BY, optional Pexels). See photos.py.
 USE_PHOTOS = env("USE_PHOTOS", "1") == "1"
+STORIES = env("STORIES", "1") == "1"   # also post a 9:16 story to Instagram and Facebook after each feed post
 PEXELS_API_KEY = env("PEXELS_API_KEY")      # optional (Pexels has paused new keys)
 PIXABAY_API_KEY = env("PIXABAY_API_KEY")    # optional, free and instant at pixabay.com/api/docs
 

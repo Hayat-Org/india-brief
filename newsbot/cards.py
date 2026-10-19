@@ -190,3 +190,58 @@ def render_digest_slide(index: int, total: int, headline: str, category: str, so
     d.text((pad, 1150), f"Source: {source}", font=_font(36), fill="#E8EEF9")
     d.text((pad, 1275), config.BRAND_HANDLE, font=_font(30), fill=accent)
     return _jpeg(img)
+
+
+# --- 9:16 Stories (1080x1920) -------------------------------------------------------------
+SW, SH = 1080, 1920
+
+
+def _story_background(photo):
+    if photo is None:
+        img = Image.new("RGB", (SW, SH), (13, 22, 41))
+        d = ImageDraw.Draw(img)
+        for y in range(SH):
+            t = y / (SH - 1)
+            d.line([(0, y), (SW, y)], fill=tuple(int(a + (b - a) * t) for a, b in zip((13, 22, 41), (24, 40, 72))))
+        return img
+    pw, ph = photo.size
+    scale = max(SW / pw, SH / ph)
+    photo = photo.resize((int(pw * scale) + 1, int(ph * scale) + 1), Image.LANCZOS)
+    left, top = (photo.width - SW) // 2, (photo.height - SH) // 2
+    base = photo.crop((left, top, left + SW, top + SH)).convert("RGBA")
+    shade = Image.new("RGBA", (SW, SH))
+    sd = ImageDraw.Draw(shade)
+    for y in range(SH):
+        sd.line([(0, y), (SW, y)], fill=(8, 14, 28, int(255 * (0.45 + 0.45 * (y / (SH - 1))))))
+    return Image.alpha_composite(base, shade).convert("RGB")
+
+
+def render_story(headline: str, category: str = "", state: str = "National", photo=None, kicker: str = "") -> bytes:
+    """Headline over a (licensed) photo or our gradient. Keeps the top and bottom 250 px clear for app UI."""
+    img = _story_background(photo)
+    d = ImageDraw.Draw(img)
+    pad = 80
+    accent = CATEGORY_COLORS.get(category, "#FFB703")
+    d.rectangle([0, 0, SW, 14], fill=accent)
+    d.text((pad, 270), config.BRAND_NAME.upper(), font=_font(44), fill="#FFFFFF")
+    label = kicker or (category.upper() if category else "INDIA")
+    f = _font(32)
+    tw = d.textlength(label, font=f)
+    d.rounded_rectangle([pad, 350, pad + tw + 48, 416], radius=33, fill=accent)
+    d.text((pad + 24, 361), label, font=f, fill="#0D1629")
+    max_w, top, bottom = SW - 2 * pad, 560, 1560
+    size = 92
+    while size >= 48:
+        f = _font(size)
+        lines = _wrap(d, headline, f, max_w)
+        if len(lines) * int(size * 1.22) <= bottom - top:
+            break
+        size -= 4
+    yy = top
+    for line in lines:
+        d.text((pad, yy), line, font=f, fill="#FFFFFF")
+        yy += int(size * 1.22)
+    d.text((pad, 1620), config.BRAND_HANDLE, font=_font(44), fill=accent)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=88, optimize=True)
+    return buf.getvalue()
