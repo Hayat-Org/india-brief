@@ -625,6 +625,11 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
         return "skipped_safety"
     if careful and mode == "auto":
         strong = (a.get("corroboration") or 1) >= 2 or a.get("source_kind") in ("govt", "factcheck")
+        # One big mainstream outlet is enough for incidents, accidents, disasters and politics; sexual-offence,
+        # minor and pending-case stories still need a second outlet or an official source.
+        needs_two = {"sexual offence", "minor involved", "legal risk", "communal/mob violence"} & set(tier_reasons)
+        if not strong and not needs_two and mainstream_count(a) >= 1:
+            strong = True
         if not strong:
             db.update_article(a["id"], {"status": "discarded", "hold_reason": "careful story, single source"})
             runlog.note(f"{tag} → not posted: sensitive story ({'; '.join(tier_reasons)}) needs 2+ outlets or an official source")

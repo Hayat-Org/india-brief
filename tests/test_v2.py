@@ -67,9 +67,9 @@ def test_crime_stories_are_skipped_in_auto(env):
     db = FakeDB()
     db.set_setting("mode2", "auto")
     row = db.insert_article({"url": "c1", "title": "Floods in Assam affected", "title_norm": "x",
-                             "snippet": "Floods in Assam affected 2,500 people.", "source": "NDTV",
+                             "snippet": "Floods in Assam affected 2,500 people.", "source": "Local",
                              "source_kind": "news", "status": "candidate", "combined": 7,
-                             "category": "Crime & Law", "state": "Assam", "sources": [{"name": "NDTV", "url": "c1"}]})
+                             "category": "Crime & Law", "state": "Assam", "sources": [{"name": "Local", "url": "c1", "kind": "regional"}]})
     assert pipeline.process_candidate(db, db.get_article(row["id"])) == "skipped_safety"
     assert env["posts"] == []
 

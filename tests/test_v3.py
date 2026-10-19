@@ -339,7 +339,7 @@ def test_fallback_photo_query():
 
 def test_slot_replaces_skipped_story_with_next_best(env):
     db = FakeDB()
-    risky = add_candidate(db, "Crime story one", kind="news", category="Crime & Law", state="Punjab",
+    risky = add_candidate(db, "Rape case story one", kind="news", category="Crime & Law", state="Punjab",
                           sources_=[{"name": "The Hindu", "url": "u", "kind": "news"}])
     ok = add_candidate(db, "Health story two", kind="news", category="Health", state="Kerala",
                        sources_=[{"name": "The Hindu", "url": "u", "kind": "news"}])
@@ -412,7 +412,7 @@ def test_careful_story_posts_with_strong_source_and_neutral_note(env, monkeypatc
 
 def test_careful_story_single_source_is_skipped(env):
     db = FakeDB()
-    row = add_candidate(db, "Man arrested in Pune theft case", kind="news", category="Crime & Law",
+    row = add_candidate(db, "Man arrested for rape in Pune", kind="news", category="Crime & Law",
                         sources_=[{"name": "The Hindu", "url": "u", "kind": "news"}])
     assert pipeline.process_candidate(db, db.get_article(row["id"])) == "skipped_safety"
     assert "single source" in db.get_article(row["id"])["hold_reason"]

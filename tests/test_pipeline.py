@@ -137,7 +137,7 @@ def test_auto_mode_posts_clean_story_but_skips_sensitive(env):
 
     env["posts"].clear()
     fire = next(r for r in db.rows.values() if "Mumbai" in r["title"])
-    db.update_article(fire["id"], {"sensitive": True, "sensitive_reason": "violence"})
+    db.update_article(fire["id"], {"sensitive": True, "sensitive_reason": "sexual offence involving a minor", "title": "Rape accused held in Mumbai"})
     assert pipeline.process_candidate(db, db.get_article(fire["id"])) == "skipped_safety"
     assert db.get_article(fire["id"])["status"] == "discarded"
     assert env["posts"] == []
