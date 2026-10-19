@@ -126,7 +126,7 @@ class RunLog:
         try:
             text = redact(self.render())
             print(text)  # also lands in the GitHub Actions log
-            if self.errors and os.environ.get("GITHUB_ACTIONS"):  # lets the workflow's failure step know what happened
+            if (self.errors or self.job in ("publish", "digest")) and os.environ.get("GITHUB_ACTIONS"):  # slot reports always reach the issue so they can be read without Telegram
                 with open("crash_report.txt", "w") as f:
                     f.write(text[-6000:])
             if self.is_repeat(db) and not self.activity:
