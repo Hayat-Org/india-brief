@@ -686,3 +686,37 @@ def test_person_and_religion_photos_are_rejected(monkeypatch):
     monkeypatch.setattr(photos.requests, "get", lambda url, **kw: seen.append(kw["params"]["category"]) or R())
     hit = photos.pixabay("india gate")
     assert hit["url"] == "u2" and seen[0] == "places" and "people" not in seen
+
+
+def test_new_feeds_present_and_unique():
+    from newsbot import sources
+    feeds = sources.all_feeds()
+    names = [f.name for f in feeds]
+    assert len(names) == len(set(names))
+    assert {"Factly", "Newschecker", "Vishvas News", "FactCrescendo"} <= set(names)
+    assert any(f.kind == "factcheck" and f.name == "Factly" and f.site for f in feeds)
+    assert any(n.startswith("Greater Kashmir") for n in names) and any("Herald Goa" in n for n in names)
+    assert sum(1 for f in feeds if f.kind == "factcheck") >= 6
+
+
+def test_facebook_first_comment_with_full_link_and_failure_is_not_fatal(env, monkeypatch):
+    db = FakeDB()
+    monkeypatch.setattr(config, "FB_PAGE_ID", "p"); monkeypatch.setattr(config, "FB_PAGE_TOKEN", "t")
+    monkeypatch.setattr(config, "DRY_RUN", False)
+    monkeypatch.setattr(meta, "post_facebook", lambda t, l=None, image_url=None: "p_1")
+    monkeypatch.setattr(meta, "post_instagram", lambda *a, **k: "i-1")
+    monkeypatch.setattr(meta, "post_threads", lambda *a, **k: "t-1")
+    monkeypatch.setattr(pipeline.time, "sleep", lambda s: None)
+    seen = {}
+    monkeypatch.setattr(meta, "comment_facebook", lambda pid, text: seen.update(pid=pid, text=text) or "c-1")
+    row = add_candidate(db, "Clean story", kind="news", category="Health", state="Kerala", sources_=TWO)
+    draft = {"threads": "A.", "facebook": "B.", "instagram": "C.", "card_headline": "H", "hashtags": ["Kerala"],
+             "link": "https://example.com/a?utm_source=x&id=1", "short_url": "https://is.gd/abc"}
+    db.update_article(row["id"], {"draft": draft, "card_url": "https://x/y.jpg", "status": "approved"})
+    pipeline.publish_article(db, db.get_article(row["id"]))
+    assert seen["pid"] == "p_1" and seen["text"] == "Read the full story: https://example.com/a?id=1"
+    # a comment failure never fails the post
+    monkeypatch.setattr(meta, "comment_facebook", lambda pid, text: (_ for _ in ()).throw(RuntimeError("(#200) permission")))
+    row2 = add_candidate(db, "Clean story two", kind="news", category="Health", state="Goa", sources_=TWO)
+    db.update_article(row2["id"], {"draft": draft, "card_url": "https://x/y.jpg", "status": "approved"})
+    assert pipeline.publish_article(db, db.get_article(row2["id"])) == "published"

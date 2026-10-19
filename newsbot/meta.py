@@ -67,6 +67,14 @@ def post_facebook(text: str, link=None, image_url: str = None) -> str:
     return _check(r, "facebook feed")["id"]
 
 
+def comment_facebook(post_id: str, text: str) -> str:
+    """Comment as the Page on its own post (used for the clickable full source link).
+    Needs the pages_manage_engagement permission on the Page token."""
+    r = requests.post(f"{GRAPH}/{post_id}/comments", timeout=30, data={
+        "message": text, "access_token": config.FB_PAGE_TOKEN})
+    return _check(r, "facebook comment")["id"]
+
+
 def delete_facebook(post_id: str) -> None:
     """Used by /retract. (Instagram's API cannot delete posts; Threads must be removed by hand.)"""
     r = requests.delete(f"{GRAPH}/{post_id}", timeout=30,

@@ -29,7 +29,7 @@ flowchart LR
 
 | Part | Role | Files |
 | --- | --- | --- |
-| Feeds | PIB, national outlets, state-scoped Google News, specialist outlets, fact-checkers | `sources.py`, `ingest.py` |
+| Feeds | PIB, national outlets, state-scoped Google News, specialist and region-specific outlets (North-East, J&K, Ladakh, Odisha, Punjab, Goa, Karnataka and more), fact-checkers (Alt News, BOOM, Factly, Newschecker, Vishvas News, FactCrescendo). Each new feed has a Google News site: fallback | `sources.py`, `ingest.py` |
 | AI | Batch scoring, human-voice drafting | `ai.py` |
 | Safety | Tiers, topic rules, draft checks | `safety.py` |
 | Orchestration | Ingest, selection, drafting, publishing, Telegram commands | `pipeline.py` |
@@ -113,7 +113,7 @@ Checks: every number appears in the source; names matched (one stray name tolera
 ## 7. Drafting, links, hashtags, photos
 
 - Voice: plain, key fact first, no clickbait; states facts directly, never "according to" and never names the outlet; officials named as speakers of claims; accused are "alleged".
-- Source: `Source: <short link>` (publisher URL resolved from Google News, tracking removed, shortened with is.gd, TinyURL backup; outlet name if it cannot be resolved).
+- Source: `Source: <short link>` (publisher URL resolved from Google News, tracking removed, shortened with is.gd, TinyURL backup; outlet name if it cannot be resolved). On Facebook the first comment, posted by the Page, adds `Read the full story: <full publisher URL>` where it is clickable. This needs the `pages_manage_engagement` permission; if missing, the run report says so and the post is unaffected.
 - Hashtags (mandatory): Instagram 5 (2 topic, place, #IndiaNews, #IndiaInShort), Facebook 3, Threads 1 (Threads shows it without the #). Careful stories skip brand and category tags.
 - Photos, places and scenes only: Wikimedia Commons (CC0, PD, CC BY) → Openverse → Pixabay (places, buildings, nature, travel, backgrounds only) → Pexels → plain card. A word filter rejects people, portraits and religion. Credits go in the caption ("Representative photo: ..."). The image carries only headline, category, region and handle. Careful stories always use the plain card.
 
@@ -162,4 +162,4 @@ On demand (GitHub → Actions → Run workflow): Diagnose, Story test, Publish s
 
 Limits: Threads renders its hashtag without #; the facts check is strict (expect about 4–5 posts a day); Instagram links are not clickable; shortened links can reduce reach on Facebook and Instagram; election dates are entered by hand; GitHub schedules can run up to about 30 min late; free AI tiers can hit quota.
 
-Ideas: weekly reach report after about 4 weeks; source link as first Facebook comment; one lawyer review of the sensitive-topic policy; more regional and fact-check feeds; reply to comments in the first hour (manual).
+Ideas: weekly reach report after about 4 weeks; one lawyer review of the sensitive-topic policy; reply to comments in the first hour (manual).

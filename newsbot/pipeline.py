@@ -491,6 +491,13 @@ def threads_token(db) -> str:
     return db.get_setting("threads_token", "") or config.THREADS_ACCESS_TOKEN
 
 
+def clean_source_link(link: str) -> str:
+    """The publisher URL without tracking parameters ('' if it is still a Google News wrapper)."""
+    if not link or "news.google.com" in link:
+        return ""
+    return media.clean_url(link)
+
+
 def post_stories(a: dict, story_url: str) -> dict:
     """Instagram and Facebook Stories. Never blocks or fails the feed post: problems are logged as warnings."""
     out = {}
@@ -550,6 +557,21 @@ def publish_article(db, a: dict, only: list = None) -> str:
             hint = meta.explain_error(err)
             results[name] = {"ok": False, "error": err, **({"hint": hint} if hint else {})}
         time.sleep(0 if config.DRY_RUN else 3)  # polite pacing between API calls
+    fb = results.get("facebook") or {}
+    if fb.get("ok") and not is_digest and not config.DRY_RUN and not fb.get("comment") \
+            and (not only or "facebook" in only):
+        full = clean_source_link(draft.get("link") or "")
+        if full:
+            try:
+                meta.comment_facebook(fb["id"], f"Read the full story: {full}")
+                fb["comment"] = True
+            except Exception as ex:
+                fb["comment"] = False
+                hint = meta.explain_error(str(ex))
+                runlog.warn(f"#{a['id']} facebook link comment: {str(ex)[:160]}"
+                            + (" → add the pages_manage_engagement permission, then run /fbtoken again"
+                               if "permission" in str(ex).lower() or "(#200)" in str(ex) or "code=10" in str(ex)
+                               else ""))
     ok = [k for k, v in results.items() if v.get("ok")]
     failed = [k for k, v in results.items() if not v.get("ok") and not v.get("skipped")]
     update = {"status": "published" if ok else "failed", "results": results}

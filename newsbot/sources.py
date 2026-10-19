@@ -110,6 +110,18 @@ NICHE_FEEDS = [
     Feed("The Better India", "https://www.thebetterindia.com/feed/", "niche", site="thebetterindia.com"),
     Feed("Telangana Today", "https://telanganatoday.com/feed", "niche", "Telangana", site="telanganatoday.com"),
     Feed("Gaon Connection", "https://en.gaonconnection.com/feed/", "niche", site="en.gaonconnection.com"),
+    # Region-specific (added 19 Oct). Each has a Google News site: fallback if the direct feed is wrong or blocked.
+    Feed("Imphal Free Press", "https://www.ifp.co.in/feed", "niche", "Manipur", site="ifp.co.in"),
+    Feed("The Shillong Times", "https://theshillongtimes.com/feed/", "niche", "Meghalaya", site="theshillongtimes.com"),
+    Feed("Greater Kashmir", "https://www.greaterkashmir.com/feed", "niche", "Jammu and Kashmir", site="greaterkashmir.com"),
+    Feed("Daily Excelsior", "https://www.dailyexcelsior.com/feed/", "niche", "Jammu and Kashmir", site="dailyexcelsior.com"),
+]
+# Fact-checkers beyond Alt News and BOOM. Their verdicts are cited, never overridden by the AI.
+FACTCHECK_FEEDS = [
+    Feed("Factly", "https://factly.in/feed/", "factcheck", site="factly.in"),
+    Feed("Newschecker", "https://newschecker.in/feed", "factcheck", site="newschecker.in"),
+    Feed("Vishvas News", "https://www.vishvasnews.com/english/feed/", "factcheck", site="vishvasnews.com"),
+    Feed("FactCrescendo", "https://english.factcrescendo.com/feed/", "factcheck", site="english.factcrescendo.com"),
 ]
 # Only reachable through Google News site: search (no direct feed checked)
 NICHE_SITE_ONLY = [
@@ -118,6 +130,21 @@ NICHE_SITE_ONLY = [
     ("LiveLaw", "livelaw.in", ""),
     ("IndiaSpend", "indiaspend.com", ""),
     ("People's Archive of Rural India", "ruralindiaonline.org", ""),
+    # Region-specific, reached through Google News site: search
+    ("The Tribune (Punjab)", "tribuneindia.com", "Punjab"),
+    ("Deccan Herald", "deccanherald.com", "Karnataka"),
+    ("Herald Goa", "heraldgoa.in", "Goa"),
+    ("OdishaTV", "odishatv.in", "Odisha"),
+    ("Sambad English", "sambadenglish.com", "Odisha"),
+    ("Nagaland Post", "nagalandpost.com", "Nagaland"),
+    ("Arunachal Times", "arunachaltimes.in", "Arunachal Pradesh"),
+    ("Tripura Times", "tripuratimes.com", "Tripura"),
+    ("Sikkim Express", "sikkimexpress.com", "Sikkim"),
+    ("Reach Ladakh", "reachladakh.com", "Ladakh"),
+    ("Free Press Journal (MP)", "freepressjournal.in", ""),
+    ("The Pioneer (Uttarakhand)", "dailypioneer.com", ""),
+    ("The New Indian Express", "newindianexpress.com", ""),
+    ("The Assam Tribune", "assamtribune.com", "Assam"),
 ]
 
 
@@ -130,6 +157,7 @@ def all_feeds(use_google_news: bool = None) -> list:
     feeds = [f for f in NATIONAL_FEEDS if use_google_news or f.name != "Google News"]
     feeds += REGIONAL_FEEDS
     feeds += NICHE_FEEDS
+    feeds += FACTCHECK_FEEDS
     if use_google_news:
         for name, domain, state in NICHE_SITE_ONLY:
             feeds.append(Feed(f"{name} (via Google News)", gn_site_url(domain), "niche", state))
