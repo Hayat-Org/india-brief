@@ -669,3 +669,20 @@ def test_stories_never_block_feed_post(env, monkeypatch):
     monkeypatch.setattr(meta, "post_facebook_story", lambda u: "fs-1")
     out = pipeline.post_stories({"id": 1}, "https://x/y.jpg")
     assert out["instagram"]["ok"] is False and out["facebook"]["ok"] is True
+
+
+def test_person_and_religion_photos_are_rejected(monkeypatch):
+    from newsbot import photos
+    for tags in ("sadhu, india, holy man", "monk, prayer flags", "portrait, beard", "tourist, temple", "yogi, meditation"):
+        assert photos.PERSON_WORDS.search(tags), tags
+    assert not photos.PERSON_WORDS.search("india gate, delhi, monument, architecture")
+
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"hits": [{"tags": "sadhu, india", "largeImageURL": "u1", "user": "a"},
+                                         {"tags": "india gate, delhi", "largeImageURL": "u2", "user": "b", "pageURL": "p"}]}
+    seen = []
+    monkeypatch.setattr(photos.config, "PIXABAY_API_KEY", "k")
+    monkeypatch.setattr(photos.requests, "get", lambda url, **kw: seen.append(kw["params"]["category"]) or R())
+    hit = photos.pixabay("india gate")
+    assert hit["url"] == "u2" and seen[0] == "places" and "people" not in seen

@@ -25,7 +25,11 @@ PERSON_WORDS = re.compile(
     r"\b(portrait|people|person|man|men|woman|women|boy|girl|child|children|kid|crowd|rally|protest|"
     r"politician|minister|chief minister|prime minister|president|actor|actress|cricketer|player|"
     r"leader|candidate|police|soldier|army|victim|accused|arrested|wedding|funeral|selfie|face|"
-    r"born|died|speaks?|speech|meeting|visit|inaugurat\w*)\b", re.I)
+    r"born|died|speaks?|speech|meeting|visit|inaugurat\w*|"
+    r"sadhu|saint|monk|guru|baba|swami|yogi|yoga|priest|pandit|imam|nun|devotee|pilgrim|worship|prayer|"
+    r"meditat\w*|religio\w*|holy|ascetic|beard\w*|elderly|old man|old woman|tourist|farmer|worker|labou?rer|"
+    r"vendor|beggar|student|students|family|couple|baby|bride|groom|dancer|musician|model|portraits?|"
+    r"human|humans|lady|gentleman|guy|youth|teen\w*|adult|hands?|eyes)\b", re.I)
 
 
 def clean_query(q: str) -> str:
@@ -128,17 +132,20 @@ def openverse(query: str):
 def pixabay(query: str):
     if not config.PIXABAY_API_KEY:
         return None
-    r = requests.get("https://pixabay.com/api/", timeout=25, params={
-        "key": config.PIXABAY_API_KEY, "q": query, "image_type": "photo", "orientation": "vertical",
-        "safesearch": "true", "min_width": MIN_WIDTH, "per_page": 15})
-    r.raise_for_status()
-    for p in r.json().get("hits", []):
-        if PERSON_WORDS.search(p.get("tags", "")):
-            continue
-        url = p.get("largeImageURL") or p.get("webformatURL")
-        if url:
-            return {"url": url, "credit": f"{p.get('user', 'Photographer')} / Pixabay", "source": "pixabay",
-                    "page": p.get("pageURL", "")}
+    # Only the non-people categories are searched, and tags are checked for person/religion words.
+    for category in ("places", "buildings", "nature", "travel", "backgrounds"):
+        r = requests.get("https://pixabay.com/api/", timeout=25, params={
+            "key": config.PIXABAY_API_KEY, "q": query, "image_type": "photo", "orientation": "vertical",
+            "category": category, "safesearch": "true", "min_width": MIN_WIDTH, "per_page": 20})
+        r.raise_for_status()
+        for p in r.json().get("hits", []):
+            tags = p.get("tags", "")
+            if not tags or PERSON_WORDS.search(tags):
+                continue
+            url = p.get("largeImageURL") or p.get("webformatURL")
+            if url:
+                return {"url": url, "credit": f"{p.get('user', 'Photographer')} / Pixabay", "source": "pixabay",
+                        "page": p.get("pageURL", "")}
     return None
 
 

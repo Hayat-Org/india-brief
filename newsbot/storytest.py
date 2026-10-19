@@ -6,7 +6,7 @@ import time
 from . import cards, config, media, meta, photos, pipeline, runlog
 from .db import DB
 
-QUERIES = ["india flag", "india map", "india gate new delhi", "indian tricolour flag", "gateway of india mumbai"]
+QUERIES = ["india gate new delhi", "gateway of india mumbai", "taj mahal agra", "india landscape", "india flag"]
 
 
 def pixabay_photo(log):
