@@ -380,6 +380,7 @@ def cleanup_old(db, now: datetime = None) -> dict:
     for r in old:
         names.append(media.card_object_name(r.get("card_url") or ""))
         names += [media.card_object_name(u) for u in ((r.get("draft") or {}).get("slides") or [])]
+        names.append(media.card_object_name((r.get("draft") or {}).get("story_url") or ""))
     try:
         out["images"] = media.delete_cards(names)
     except Exception as ex:  # images are best effort; rows are still cleaned
