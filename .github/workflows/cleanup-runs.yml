@@ -1,0 +1,29 @@
+name: Clean old runs
+
+# Keeps the Actions page readable: deletes workflow run history older than 7 days.
+# Runs weekly (Sunday 08:30 IST) or on demand. Posts and data are not affected.
+on:
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  clean:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Delete runs older than 7 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CUTOFF=$(date -u -d '7 days ago' +%Y-%m-%d)
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&created=<$CUTOFF" \
+            --jq '.workflow_runs[] | select(.status == "completed") | .id' > ids.txt
+          echo "Deleting $(wc -l < ids.txt) runs created before $CUTOFF"
+          while read -r id; do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/runs/$id" --silent || true
+          done < ids.txt

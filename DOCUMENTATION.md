@@ -49,7 +49,8 @@ flowchart LR
 | Telegram approvals | Every 5 min | Commands and buttons |
 | Health | Daily 18:10, weekly Monday 08:45 | Tokens, dead feeds |
 | Keepalive | 1st and 15th of month | Keeps schedules active |
-| Diagnose, Story test | On demand | Full check; Pixabay and Stories test |
+| Diagnose | On demand | Full check of tokens, feeds, photos and Stories |
+| Clean old runs | Weekly, Sunday 08:30 | Deletes Actions run history older than 7 days |
 
 Pipeline workflows share one concurrency group. GitHub may start a run 15–30 min late.
 
@@ -135,7 +136,7 @@ Tables `articles` (one row per story: URL unique, scores, flags, status, draft J
 
 ## 10. Telegram
 
-Every run reports what ran, what was chosen, why anything was skipped, AI usage, queue and errors. Publish, digest, diagnose and story-test reports are also saved (secrets removed) to the GitHub issue "Run errors". Commands: `/status`, `/pause`, `/resume`, `/auto`, `/review`, `/retry <id>`, `/retract <id>`, `/fbtoken <token>` (message auto-deleted), `/help`. Owner chat only.
+Every run reports what ran, what was chosen, why anything was skipped, AI usage, queue and errors. Publish, digest and diagnose reports are also saved (secrets removed) to the GitHub issue "Run errors". Commands: `/status`, `/pause`, `/resume`, `/auto`, `/review`, `/retry <id>`, `/retract <id>`, `/fbtoken <token>` (message auto-deleted), `/help`. Owner chat only.
 
 ## 11. Configuration and secrets
 
@@ -145,7 +146,7 @@ Tunables: `MAX_POSTS_PER_DAY` 8, `MAX_POSTS_PER_SLOT` 2, `MAX_CAREFUL_PER_DAY` 4
 
 ## 12. Operations
 
-On demand (GitHub → Actions → Run workflow): Diagnose, Story test, Publish slot.
+On demand (GitHub → Actions → Run workflow): Diagnose, Publish slot, Clean old runs.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
