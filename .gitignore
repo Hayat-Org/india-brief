@@ -4,3 +4,9 @@ __pycache__/
 .venv/
 .pytest_cache/
 out/
+.heartbeat
+.reported
+crash_report.txt
+issue.txt
+*.log
+.DS_Store
