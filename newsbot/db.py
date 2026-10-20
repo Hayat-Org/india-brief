@@ -1,4 +1,5 @@
 """Thin Supabase (PostgREST) client. Tests swap this for an in-memory fake."""
+import time
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -19,8 +20,20 @@ class DB:
         headers = dict(self.headers)
         if prefer:
             headers["Prefer"] = prefer
-        r = requests.request(method, self.base + path, headers=headers,
-                             params=params, json=json, timeout=30)
+        r = None
+        for attempt in range(1, 4):  # Supabase sometimes answers 502/503/504 for a moment: retry, then fail
+            try:
+                r = requests.request(method, self.base + path, headers=headers,
+                                     params=params, json=json, timeout=30)
+            except (requests.ConnectionError, requests.Timeout):
+                if attempt == 3:
+                    raise
+                time.sleep(2 * attempt)
+                continue
+            if r.status_code in (502, 503, 504) and attempt < 3:
+                time.sleep(2 * attempt)
+                continue
+            break
         if r.status_code >= 300:
             raise RuntimeError(f"Supabase {method} {path} -> {r.status_code}: {r.text[:300]}")
         return r.json() if r.text else None

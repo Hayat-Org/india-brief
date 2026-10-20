@@ -791,3 +791,14 @@ def test_drafting_is_deferred_not_failed_when_ai_is_rate_limited(env, monkeypatc
     assert pipeline.process_candidate(db, db.get_article(row["id"])) == "deferred"
     assert (db.get_article(row["id"]).get("attempts") or 0) == 0
     assert db.get_article(row["id"])["status"] == "candidate"
+
+
+def test_database_retries_a_temporary_bad_gateway(monkeypatch):
+    from newsbot import db as dbmod
+    class R:
+        def __init__(self, code, text=""): self.status_code, self.text = code, text
+        def json(self): return [{"id": 1}]
+    seq = [R(502, "Bad Gateway"), R(502, "Bad Gateway"), R(200, "[{}]")]
+    monkeypatch.setattr(dbmod.requests, "request", lambda *a, **k: seq.pop(0))
+    monkeypatch.setattr(dbmod.time, "sleep", lambda s: None)
+    assert dbmod.DB("https://x", "k")._req("GET", "/articles") == [{"id": 1}] and not seq
