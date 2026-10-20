@@ -720,3 +720,74 @@ def test_facebook_first_comment_with_full_link_and_failure_is_not_fatal(env, mon
     row2 = add_candidate(db, "Clean story two", kind="news", category="Health", state="Goa", sources_=TWO)
     db.update_article(row2["id"], {"draft": draft, "card_url": "https://x/y.jpg", "status": "approved"})
     assert pipeline.publish_article(db, db.get_article(row2["id"])) == "published"
+
+
+# ---- AI rate limits -------------------------------------------------------------------------
+def test_wait_hint_and_limit_kinds():
+    assert ai.wait_hint("Rate limit ... Please try again in 12m3.4s. Visit") == 12 * 60 + 3.4
+    assert ai.wait_hint("try again in 2.5s") == 2.5
+    assert ai.wait_hint('{"retryDelay": "34s"}') == 34
+    assert ai.is_daily_limit("on tokens per day (TPD): Limit 200000") and not ai.is_daily_limit("tokens per minute (TPM)")
+    assert ai.is_rate_limit("groq x 429: {...}") and not ai.is_rate_limit("gemini x 503: overloaded")
+
+
+def test_daily_limit_parks_model_and_raises_rate_limited(monkeypatch):
+    ai.BLOCKED.clear()
+    monkeypatch.setattr(config, "AI_PACE_SECONDS", 0)
+    monkeypatch.setattr(config, "GROQ_API_KEY", "k"); monkeypatch.setattr(config, "GEMINI_API_KEY", "")
+    monkeypatch.setattr(config, "GROQ_FAST_MODELS", ["m1"]); monkeypatch.setattr(config, "GROQ_QUALITY_MODELS", ["m2"])
+    calls = []
+    def boom(model, s, u):
+        calls.append(model)
+        raise ai.AIError("groq %s 429: Rate limit on tokens per day (TPD): Limit 200000. Please try again in 40m0s." % model)
+    monkeypatch.setattr(ai, "_groq", boom)
+    saved = {}
+    monkeypatch.setattr(ai, "STATE_SAVER", lambda raw: saved.update(raw=raw))
+    try:
+        ai.chat_json("s", "u")
+        assert False, "should raise"
+    except ai.AIRateLimited as ex:
+        assert ex.until > 0
+    assert calls == ["m1", "m2"] and "groq:m1" in saved["raw"]
+    calls.clear()
+    try:
+        ai.chat_json("s", "u")
+    except ai.AIRateLimited:
+        pass
+    assert calls == []  # parked models are not called again
+    ai.BLOCKED.clear()
+
+
+def test_short_minute_limit_is_waited_out_once(monkeypatch):
+    ai.BLOCKED.clear()
+    monkeypatch.setattr(config, "AI_PACE_SECONDS", 0)
+    monkeypatch.setattr(config, "GROQ_API_KEY", "k"); monkeypatch.setattr(config, "GEMINI_API_KEY", "")
+    monkeypatch.setattr(config, "GROQ_FAST_MODELS", ["m1"]); monkeypatch.setattr(config, "GROQ_QUALITY_MODELS", ["m1"])
+    monkeypatch.setattr(ai.time, "sleep", lambda s: None)
+    n = {"c": 0}
+    def flaky(model, s, u):
+        n["c"] += 1
+        if n["c"] == 1:
+            raise ai.AIError("groq m1 429: tokens per minute (TPM). Please try again in 3.2s.")
+        return '{"ok": true}'
+    monkeypatch.setattr(ai, "_groq", flaky)
+    assert ai.chat_json("s", "u") == {"ok": True} and n["c"] == 2
+
+
+def test_scoring_pauses_quietly_when_ai_is_rate_limited(env, monkeypatch):
+    db = FakeDB()
+    for n in range(3):
+        add_candidate(db, f"Story {n}", kind="news", category="Health", sources_=TWO)
+        db.update_article(n + 1, {"status": "new"})
+    monkeypatch.setattr(ai, "score_batch", lambda chunk: (_ for _ in ()).throw(ai.AIRateLimited("limit", 1234.0)))
+    out = pipeline.score_pending(db)
+    assert out["errors"] == 0 and out["rate_limited"] == 1234.0 and out["backlog"] >= 1
+
+
+def test_drafting_is_deferred_not_failed_when_ai_is_rate_limited(env, monkeypatch):
+    db = FakeDB()
+    monkeypatch.setattr(ai, "write_post", lambda *a, **k: (_ for _ in ()).throw(ai.AIRateLimited("limit")))
+    row = add_candidate(db, "Health story", kind="news", category="Health", state="Kerala", sources_=TWO)
+    assert pipeline.process_candidate(db, db.get_article(row["id"])) == "deferred"
+    assert (db.get_article(row["id"]).get("attempts") or 0) == 0
+    assert db.get_article(row["id"])["status"] == "candidate"

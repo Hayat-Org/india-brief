@@ -1,4 +1,6 @@
 """Hourly job: fetch feeds -> dedup -> score -> fast-track breaking news. Sends a Telegram report."""
+from datetime import datetime, timedelta, timezone
+
 from . import ai, pipeline, runlog, trends
 from .db import DB
 from .sources import all_feeds
@@ -55,7 +57,13 @@ def main() -> None:
                     f"({sc['niche_candidates']} specialist), {sc['discarded']} discarded "
                     f"(below minimum {sc['below_min']}, not India {sc['not_india']}, "
                     f"opinion {sc['opinion']}, promo {sc['promo']}), too old {sc['stale']}")
-            if sc["backlog"]:
+            if "rate_limited" in sc:
+                until = sc["rate_limited"]
+                when = (datetime.fromtimestamp(until, timezone(timedelta(hours=5, minutes=30))).strftime("%H:%M IST")
+                        if until else "a later run")
+                log.warn(f"AI free limit reached: scoring paused (models available again about {when}). "
+                         f"Nothing is lost; {sc['backlog']} stories wait.")
+            elif sc["backlog"]:
                 log.add(f"Backlog: {sc['backlog']} stories wait for the next run")
             for score, title, category, state, outlets in sc["top"][:3]:
                 log.add(f"  top: {score} · {category} · {state} · {outlets} outlet(s) · {title[:80]}")

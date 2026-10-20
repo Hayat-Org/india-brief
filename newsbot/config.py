@@ -89,7 +89,8 @@ DIGEST_MAX_STORIES = _int("DIGEST_MAX_STORIES", 5)
 MIN_SCORE = _float("MIN_SCORE", 5.5)
 BREAKING_SCORE = _float("BREAKING_SCORE", 8.8)
 BREAKING_MIN_SOURCES = _int("BREAKING_MIN_SOURCES", 2)
-MAX_SCORE_PER_RUN = _int("MAX_SCORE_PER_RUN", 80)   # stories scored per hourly run
+MAX_SCORE_PER_RUN = _int("MAX_SCORE_PER_RUN", 40)   # stories scored per hourly run (a third of this at night, 00:00-07:00 IST)
+AI_PACE_SECONDS = _float("AI_PACE_SECONDS", 3.0)    # pause after each AI call, to stay under per-minute limits
 SCORE_BATCH_SIZE = _int("SCORE_BATCH_SIZE", 8)       # stories judged per AI call (saves free-tier quota)
 ARTICLE_MAX_AGE_HOURS = _int("ARTICLE_MAX_AGE_HOURS", 48)  # never post anything published longer ago
 # Old rows (and their card images) are deleted after this. Never below the age limit + 24h, because stored

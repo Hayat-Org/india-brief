@@ -295,7 +295,9 @@ def score_pending(db, now: datetime = None, trends: dict = None) -> dict:
         else:
             fresh.append(a)
     fresh.sort(key=score_priority, reverse=True)  # stable: newest first among equals
-    todo = fresh[: config.MAX_SCORE_PER_RUN]
+    ist_hour = now.astimezone(timezone(timedelta(hours=5, minutes=30))).hour
+    limit = config.MAX_SCORE_PER_RUN if ist_hour >= 7 else max(8, config.MAX_SCORE_PER_RUN // 3)  # quiet hours: little news
+    todo = fresh[:limit]
     stats["backlog"] = len(fresh) - len(todo)
     size, failed_chunks = max(1, config.SCORE_BATCH_SIZE), 0
 
@@ -304,6 +306,11 @@ def score_pending(db, now: datetime = None, trends: dict = None) -> dict:
         try:
             results = ai.score_batch(chunk)
             failed_chunks = 0
+        except ai.AIRateLimited as ex:
+            # Free daily/minute limit reached: not an error. Pause scoring, the rest waits for a later run.
+            stats["rate_limited"] = ex.until or 0
+            stats["backlog"] += max(0, len(todo) - i)
+            break
         except Exception as ex:
             stats["errors"] += len(chunk)
             if len(stats["error_samples"]) < 3:
@@ -461,7 +468,13 @@ def careful_used_today(db, now: datetime = None) -> int:
 
 
 def load_runtime_tokens(db) -> None:
-    """Prefer the Facebook/Instagram credentials saved by /fbtoken over the GitHub secrets."""
+    """Prefer the Facebook/Instagram credentials saved by /fbtoken over the GitHub secrets.
+    Also restores which AI models were at their daily limit in an earlier run."""
+    try:
+        ai.load_state(db.get_setting("ai_blocked", ""))
+        ai.STATE_SAVER = lambda raw: db.set_setting("ai_blocked", raw)
+    except Exception as ex:
+        print(f"AI limit memory not loaded: {str(ex)[:100]}")
     try:
         token = db.get_setting("fb_page_token", "")
         if token:
@@ -681,6 +694,9 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
                     draft, issues = second, second_issues
             except Exception:
                 pass
+    except ai.AIRateLimited as ex:
+        runlog.warn(f"{tag} → drafting paused: AI free limit reached, will retry in a later slot")
+        return "deferred"
     except Exception as ex:
         attempts = (a.get("attempts") or 0) + 1
         db.update_article(a["id"], {"attempts": attempts,

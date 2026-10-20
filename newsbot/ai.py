@@ -26,6 +26,59 @@ class AIError(RuntimeError):
     pass
 
 
+class AIRateLimited(AIError):
+    """Every available model is at its free-tier limit. `until` = epoch time of the earliest retry."""
+    def __init__(self, msg: str, until: float = 0.0):
+        super().__init__(msg)
+        self.until = until
+
+
+# Models that said "daily limit reached" (or are cooling down): "provider:model" -> epoch until which we skip them.
+# Saved in the database between runs (see load_state), so one run's discovery protects the next.
+BLOCKED = {}
+STATE_SAVER = None  # set by pipeline.load_runtime_tokens: writes the JSON string to the settings table
+
+
+def load_state(raw: str) -> None:
+    try:
+        now = time.time()
+        for k, v in (json.loads(raw or "{}") or {}).items():
+            if float(v) > now:
+                BLOCKED[k] = float(v)
+    except Exception:
+        pass
+
+
+def _save_state() -> None:
+    if STATE_SAVER:
+        try:
+            now = time.time()
+            STATE_SAVER(json.dumps({k: v for k, v in BLOCKED.items() if v > now}))
+        except Exception:
+            pass
+
+
+_UNITS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
+
+
+def wait_hint(text: str) -> float:
+    """Seconds the provider asks us to wait ("try again in 12m3.4s" / "retryDelay": "34s"); 0 if none."""
+    text = text or ""
+    m = re.search(r"try again in\s+([0-9hms.\s]+)", text)
+    if m:
+        return sum(float(n) * _UNITS[u] for n, u in re.findall(r"([0-9.]+)\s*(ms|h|m|s)", m.group(1)))
+    m = re.search(r'retryDelay"?\s*:\s*"?([0-9.]+)s', text)
+    return float(m.group(1)) if m else 0.0
+
+
+def is_rate_limit(text: str) -> bool:
+    return " 429" in text or "RESOURCE_EXHAUSTED" in text or "rate limit" in text.lower()
+
+
+def is_daily_limit(text: str) -> bool:
+    return bool(re.search(r"per day|\(TPD\)|\bRPD\b|PerDay|daily", text or "", re.I))
+
+
 def _extract_json(text: str) -> dict:
     text = (text or "").strip()
     text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.M).strip()
@@ -52,7 +105,7 @@ def _groq(model: str, system: str, user: str) -> str:
         timeout=TIMEOUT,
     )
     if r.status_code >= 300:
-        raise AIError(f"groq {model} {r.status_code}: {r.text[:200]}")
+        raise AIError(f"groq {model} {r.status_code}: {r.text[:700]}")
     return r.json()["choices"][0]["message"]["content"]
 
 
@@ -68,7 +121,7 @@ def _gemini(model: str, system: str, user: str) -> str:
         timeout=TIMEOUT,
     )
     if r.status_code >= 300:
-        raise AIError(f"gemini {model} {r.status_code}: {r.text[:200]}")
+        raise AIError(f"gemini {model} {r.status_code}: {r.text[:700]}")
     return r.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 
@@ -87,20 +140,48 @@ def _chain(quality: str) -> list:
 
 
 def chat_json(system: str, user: str, quality: str = "fast") -> dict:
-    """Try each model in turn until one returns valid JSON."""
-    errors = []
-    for provider, model in _chain(quality):
-        try:
-            raw = (_groq if provider == "groq" else _gemini)(model, system, user)
-            result = _extract_json(raw)
-            USAGE["ok"][f"{provider}:{model}"] += 1
-            return result
-        except Exception as ex:  # rate limit, deprecation, bad JSON: try the next model
-            USAGE["fail"][f"{provider}:{model}"] += 1
-            if " 404" in str(ex):
-                DEAD.add((provider, model))
-            errors.append(f"{provider}:{model}: {str(ex)[:120]}")
-            time.sleep(1)
+    """Try each model in turn until one returns valid JSON.
+
+    Rate limits are handled, not just reported: a short "try again in Ns" is waited out once; a daily
+    limit parks that model until it resets (remembered across runs). If every model is parked or limited
+    the call raises AIRateLimited, which callers treat as "come back later", not as a failure."""
+    errors, limited, now = [], 0, time.time()
+    chain = _chain(quality)
+    for provider, model in chain:
+        key = f"{provider}:{model}"
+        if BLOCKED.get(key, 0) > now:
+            limited += 1
+            continue
+        for attempt in (1, 2):
+            try:
+                raw = (_groq if provider == "groq" else _gemini)(model, system, user)
+                result = _extract_json(raw)
+                USAGE["ok"][key] += 1
+                if config.AI_PACE_SECONDS:
+                    time.sleep(config.AI_PACE_SECONDS)  # spread calls out so per-minute limits are not hit
+                return result
+            except Exception as ex:  # rate limit, deprecation, bad JSON: try the next model
+                msg = str(ex)
+                USAGE["fail"][key] += 1
+                if is_rate_limit(msg):
+                    wait, daily = wait_hint(msg), is_daily_limit(msg)
+                    if daily or wait > 90 or attempt == 2:
+                        BLOCKED[key] = time.time() + (min(wait + 30, 86400) if wait else (3600 if daily else 120))
+                        _save_state()
+                        limited += 1
+                        errors.append(f"{key}: limit reached" + (f", retry in ~{int(wait // 60)} min" if wait > 90 else ""))
+                        break
+                    time.sleep(min(wait + 1, 30) if wait else 5)  # short per-minute limit: wait it out once
+                    continue
+                if " 404" in msg:
+                    DEAD.add((provider, model))
+                elif " 503" in msg or " 500" in msg:
+                    time.sleep(2)
+                errors.append(f"{key}: {msg[:120]}")
+                break
+    if chain and limited >= len(chain):
+        until = min((BLOCKED.get(f"{p}:{m}", 0) for p, m in chain), default=0)
+        raise AIRateLimited("all AI models are at their free limit: " + " | ".join(errors[:3]), until)
     raise AIError("all models failed: " + " | ".join(errors) if errors else "no AI keys configured")
 
 
