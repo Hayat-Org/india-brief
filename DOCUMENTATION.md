@@ -46,7 +46,7 @@ flowchart LR
 | Ingest | Hourly | Reads feeds, dedupes, scores with AI, deletes data older than 72 h |
 | Publish slot | 07:35, 12:35, 18:35, 21:05 | Selects, drafts, checks, posts, posts Stories |
 | Digest | 22:10 | "Today in short" carousel |
-| Celebrity watch | Every 20 min | Reads entertainment, sports and business feeds; posts stories about well-known people right away |
+| Fast-track watch | 6 times a day: 08:00, 12:00, 16:00, 20:00 IST (day), 00:30 and 04:30 IST (night) | Reads entertainment, sports, business and main national feeds; posts celebrity and urgent/critical stories right away |
 | Telegram approvals | Every 5 min | Commands and buttons |
 | Health | Daily 18:10, weekly Monday 08:45 | Tokens, dead feeds |
 | Keepalive | 1st and 15th of month | Keeps schedules active |
@@ -87,7 +87,7 @@ Stories about well-known people (film, TV and music stars, cricketers and other 
 
 ```mermaid
 flowchart TD
-  A[Feeds: hourly ingest + 20-min Celebrity watch] --> B[Score, famous names first]
+  A[Feeds: hourly ingest + Fast-track watch 6x a day] --> B[Score, famous names first]
   B --> C{Celebrity? AI field or built-in name list}
   C -- no --> Q[Normal slot queue]
   C -- yes --> D{Already in the database?<br/>published, approved or pending, 72 h}
@@ -105,6 +105,8 @@ flowchart TD
 - Sources: one main outlet, an official source or a fact-checker is enough; a regional or specialist source is enough unless the story is a death or illness report (hoax risk). Rumour wording ("reportedly", "dating", "sources say") needs two outlets.
 - Legal and crime stories about a celebrity can go out on one trusted source, in careful wording: the person may be named as the subject, every allegation is attributed to police, the complaint or the court, no guilt labels. Sexual-offence and minor cases still need two outlets or an official source, and survivors, minors and families are never identified.
 - The person is named in the headline and every post text (otherwise the draft is retried) and is the first hashtag, except on careful crime stories.
+- Urgent and critical news uses the same fast lane (`breaking_pass`): significance 9+, or 8+ with an emergency word in the headline (lockdown, curfew, evacuation, earthquake, cyclone, terror attack, stampede, war, nationwide...), carried by one trusted source (main outlet, official, fact-checker) or by 2+ outlets; the older rule (score 8.8+ with 2+ outlets) still applies. Cap `MAX_BREAKING_PER_DAY` 3. Careful-topic rules and the election-silence block still apply.
+- The hourly ingest also runs both fast lanes, so a celebrity or urgent story waits at most about an hour even between watch runs.
 - Cap: 6 fast-track posts a day (`CELEBRITY_PER_DAY`), separate from the 8 regular posts and the 4 careful posts. Switch off with `CELEBRITY_FAST=0`.
 - Photos: the person-free photo rule is unchanged, so these posts use a place or scene photo or the plain card, never a photo of the celebrity.
 
@@ -185,7 +187,7 @@ On demand (GitHub → Actions → Run workflow): Diagnose, Publish slot, Clean o
 | Photo missing | No licensed person-free match | Plain card, no action |
 | Outlet name instead of link | Google News link not resolved | Cosmetic |
 
-110 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
+112 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
 
 ## 13. Known limits and ideas
 

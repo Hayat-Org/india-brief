@@ -161,8 +161,10 @@ def test_breaking_needs_two_sources_and_respects_cap(env):
     db.set_setting("mode2", "auto")
     seed(db)
     pipeline.score_pending(db)
+    fire = next(r for r in db.rows.values() if "Mumbai" in r["title"])
+    db.update_article(fire["id"], {"source_kind": "state_gn"})  # one Google News regional hit is not a trusted single source
     out = pipeline.breaking_pass(db)
-    assert len(out) == 1  # Assam story has 2 outlets; Mumbai fire has only 1
+    assert len(out) == 1  # Assam story has 2 outlets; Mumbai fire has only 1 untrusted one
     assert sorted(env["posts"]) == ["facebook", "instagram", "threads"]
 
 

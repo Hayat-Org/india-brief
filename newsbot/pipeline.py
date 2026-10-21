@@ -1004,8 +1004,26 @@ def celebrity_pass(db, now: datetime = None) -> list:
     return out
 
 
+URGENT_WORDS = re.compile(
+    r"\b(lockdown|curfew|evacuat\w*|earthquake|tsunami|cyclone|landslide|cloudburst|flash flood|terror attack|"
+    r"blast|stampede|plane crash|train accident|derail\w*|war|ceasefire|missile|national emergency|"
+    r"internet (shutdown|suspended)|section 144|outbreak|pandemic|nationwide|bank run|rbi (repo|rate)|"
+    r"currency ban|demonetis\w*)\b", re.I)
+
+
+def is_urgent(a: dict) -> bool:
+    """Urgent/critical: very high significance, or high significance with an emergency word in the headline,
+    carried by one trusted source (main outlet, official or fact-checker) or by 2+ outlets."""
+    sig = float(a.get("significance") or 0)
+    head = f"{a.get('title') or ''} {a.get('snippet') or ''}"
+    big = sig >= config.URGENT_SIGNIFICANCE or (sig >= config.URGENT_WORD_SIGNIFICANCE and bool(URGENT_WORDS.search(head)))
+    trusted = (a.get("corroboration") or 1) >= 2 or a.get("source_kind") in ("govt", "news", "factcheck")
+    return big and trusted
+
+
 def breaking_pass(db, now: datetime = None) -> list:
-    """Fast-track: very high score AND confirmed by 2+ outlets. Capped per day."""
+    """Fast-track for urgent/critical news: (score >= BREAKING_SCORE and 2+ outlets) or is_urgent (one trusted
+    source is enough for a lockdown, major disaster or similar). Capped per day; careful rules still apply."""
     now = now or now_utc()
     if is_paused(db):
         return []
@@ -1014,14 +1032,14 @@ def breaking_pass(db, now: datetime = None) -> list:
     used += sum(1 for p in db.list_by_status("pending_review") if p.get("breaking"))
     out = []
     cands = [a for a in db.list_by_status("candidate")
-             if (a.get("combined") or 0) >= config.BREAKING_SCORE
-             and (a.get("corroboration") or 1) >= config.BREAKING_MIN_SOURCES
-             and not is_too_old(a, now)]
+             if (((a.get("combined") or 0) >= config.BREAKING_SCORE
+                  and (a.get("corroboration") or 1) >= config.BREAKING_MIN_SOURCES) or is_urgent(a))
+             and not celeb_name(a) and not is_too_old(a, now)]
     cands.sort(key=lambda a: a["combined"], reverse=True)
     for a in cands:
         if used >= config.MAX_BREAKING_PER_DAY or len(posted) + len(out) >= config.MAX_POSTS_PER_DAY:
             break
-        runlog.note(f"⚡ Fast-track: #{a['id']} ({a['combined']}, {a.get('corroboration')} outlets) {a['title'][:80]}")
+        runlog.note(f"⚡ Urgent fast-track: #{a['id']} ({a['combined']}, {a.get('corroboration')} outlet(s)) {a['title'][:80]}")
         out.append(process_candidate(db, a, breaking=True))
         used += 1
     return out

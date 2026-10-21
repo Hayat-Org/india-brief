@@ -1,15 +1,16 @@
-"""Celebrity watch (every 20 minutes): read only entertainment, sports and business feeds, score the new
-stories, and post anything about a well-known person right away (duplicate-checked). It reports on Telegram
-only when it posted something or hit a problem. Normal ingest and the 4 daily slots are untouched.
+"""Fast-track watch (6 times a day): read entertainment, sports and business feeds plus the main national and
+official feeds, score the new stories, and post right away anything about a well-known person or any urgent,
+critical news (lockdown, major disaster...), duplicate-checked. Reports on Telegram only when it posted
+something or hit a problem. Normal ingest and the 4 daily slots are untouched.
 """
 from . import ai, config, pipeline, runlog
 from .db import DB
 from .ingest import stage
-from .sources import celebrity_feeds
+from .sources import watch_feeds
 
 
 def main() -> None:
-    log = runlog.start("celebwatch", "Celebrity watch", quiet_unless_activity=True)
+    log = runlog.start("celebwatch", "Fast-track watch", quiet_unless_activity=True)
     db = None
     try:
         db = DB()
@@ -17,7 +18,7 @@ def main() -> None:
         if not config.CELEBRITY_FAST:
             log.add("Celebrity fast-track is switched off (CELEBRITY_FAST=0).")
             return
-        entries, results = stage(log, "Fetching feeds", lambda: pipeline.collect_entries(celebrity_feeds()), ([], []))
+        entries, results = stage(log, "Fetching feeds", lambda: pipeline.collect_entries(watch_feeds()), ([], []))
         ok = sum(1 for r in results if r.ok)
         log.add(f"Feeds: {ok}/{len(results)} working")
         if results and not ok:
@@ -38,6 +39,10 @@ def main() -> None:
         posted = stage(log, "Celebrity fast-track", lambda: pipeline.celebrity_pass(db), [])
         if posted:
             log.add(f"Celebrity fast-track: {len(posted)} processed ({', '.join(posted)})")
+            log.mark_activity()
+        urgent = stage(log, "Urgent fast-track", lambda: pipeline.breaking_pass(db), [])
+        if urgent:
+            log.add(f"Urgent fast-track: {len(urgent)} processed ({', '.join(urgent)})")
             log.mark_activity()
         if ai.USAGE["ok"] or ai.USAGE["fail"]:
             log.add(ai.usage_summary())

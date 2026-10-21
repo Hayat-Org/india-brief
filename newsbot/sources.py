@@ -183,6 +183,15 @@ def celebrity_feeds(use_google_news: bool = None) -> list:
     return feeds
 
 
+def watch_feeds(use_google_news: bool = None) -> list:
+    """Feeds for the fast-track watch: celebrity feeds plus the main national and official feeds (urgent news)."""
+    from . import config
+    if use_google_news is None:
+        use_google_news = config.USE_GOOGLE_NEWS
+    national = [f for f in NATIONAL_FEEDS if use_google_news or f.name != "Google News"]
+    return celebrity_feeds(use_google_news) + national
+
+
 def all_feeds(use_google_news: bool = None) -> list:
     """Google News feeds are discovery-only (headline + source + link). Their terms for
     republication are unclear, so they can be switched off with USE_GOOGLE_NEWS=0."""

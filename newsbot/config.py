@@ -66,7 +66,7 @@ DEFAULT_MODE = env("DEFAULT_MODE", "auto")  # auto = post by itself (risky stori
 
 MAX_POSTS_PER_DAY = _int("MAX_POSTS_PER_DAY", 8)
 MAX_POSTS_PER_SLOT = _int("MAX_POSTS_PER_SLOT", 2)
-MAX_BREAKING_PER_DAY = _int("MAX_BREAKING_PER_DAY", 2)
+MAX_BREAKING_PER_DAY = _int("MAX_BREAKING_PER_DAY", 3)
 MAX_PENDING_REVIEW = _int("MAX_PENDING_REVIEW", 4)
 REVIEW_EXPIRY_HOURS = _int("REVIEW_EXPIRY_HOURS", 10)
 
@@ -89,6 +89,8 @@ DIGEST_MAX_STORIES = _int("DIGEST_MAX_STORIES", 5)
 MIN_SCORE = _float("MIN_SCORE", 5.5)
 BREAKING_SCORE = _float("BREAKING_SCORE", 8.8)
 BREAKING_MIN_SOURCES = _int("BREAKING_MIN_SOURCES", 2)
+URGENT_SIGNIFICANCE = _float("URGENT_SIGNIFICANCE", 9.0)  # urgent/critical story: posts on ONE trusted source (main outlet or official)
+URGENT_WORD_SIGNIFICANCE = _float("URGENT_WORD_SIGNIFICANCE", 8.0)  # ...or this with an emergency word in the headline
 MAX_SCORE_PER_RUN = _int("MAX_SCORE_PER_RUN", 40)   # stories scored per hourly run (a third of this at night, 00:00-07:00 IST)
 AI_PACE_SECONDS = _float("AI_PACE_SECONDS", 3.0)    # pause after each AI call, to stay under per-minute limits
 SCORE_BATCH_SIZE = _int("SCORE_BATCH_SIZE", 8)       # stories judged per AI call (saves free-tier quota)
@@ -110,7 +112,7 @@ CELEBRITY_FAST = env("CELEBRITY_FAST", "1") == "1"
 CELEBRITY_PER_DAY = _int("CELEBRITY_PER_DAY", 6)
 CELEBRITY_MIN_SCORE = _float("CELEBRITY_MIN_SCORE", 3.5)   # normal minimum is MIN_SCORE
 CELEBRITY_BONUS = _float("CELEBRITY_BONUS", 0.8)
-CELEBWATCH_SCORE_LIMIT = _int("CELEBWATCH_SCORE_LIMIT", 16)  # stories scored per 20-minute celebrity run
+CELEBWATCH_SCORE_LIMIT = _int("CELEBWATCH_SCORE_LIMIT", 30)  # stories scored per fast-track watch run
 
 POLL_SECONDS = _int("POLL_SECONDS", 240)  # how long each approvals run keeps listening for taps
 

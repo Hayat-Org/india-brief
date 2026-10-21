@@ -198,3 +198,30 @@ def test_switch_off_and_feeds(env, monkeypatch):
     assert len(feeds) >= 10 and any("Entertainment" in f.name for f in feeds)
     assert any("Names" in f.name for f in feeds)
     assert len(sources.celebrity_feeds(use_google_news=False)) == len(sources.CELEBRITY_DIRECT)
+
+
+def urgent_row(db, title, sig=9.2, kind="news", corro=1, url=None):
+    r = star_row(db, title, kind=kind, corro=corro, category="Weather & Disaster", combined=7.0, url=url)
+    db.update_article(r["id"], {"significance": sig})
+    return db.get_article(r["id"])
+
+
+def test_urgent_rules():
+    assert pipeline.is_urgent({"significance": 9.2, "source_kind": "news", "title": "Major fire", "corroboration": 1})
+    assert pipeline.is_urgent({"significance": 8.2, "source_kind": "govt", "title": "Lockdown imposed in district"})
+    assert not pipeline.is_urgent({"significance": 8.2, "source_kind": "news", "title": "Minister visits plant"})
+    assert not pipeline.is_urgent({"significance": 9.5, "source_kind": "state_gn", "title": "Big event", "corroboration": 1})
+    assert pipeline.is_urgent({"significance": 9.5, "source_kind": "state_gn", "title": "Big event", "corroboration": 2})
+
+
+def test_urgent_news_posts_on_single_trusted_source(env, monkeypatch):
+    db = FakeDB()
+    row = urgent_row(db, "Curfew imposed in Imphal after violence")
+    monkeypatch.setattr(ai, "write_post", lambda a, b, d, **kw: {
+        "threads": "A curfew was imposed in Imphal on Monday, officials said.", "facebook": "A curfew was imposed in Imphal on Monday, officials said.",
+        "instagram": "A curfew was imposed in Imphal on Monday, officials said.", "card_headline": "Curfew imposed in Imphal",
+        "hashtags": ["Imphal"]})
+    monkeypatch.setattr(media_text(), "fetch_text", lambda u: "A curfew was imposed in Imphal on Monday, officials said.")
+    out = pipeline.breaking_pass(db)
+    assert out and db.get_article(row["id"])["breaking"] is True
+    assert sources.watch_feeds(use_google_news=True)[-1].name in {f.name for f in sources.NATIONAL_FEEDS}
