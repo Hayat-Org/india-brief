@@ -242,5 +242,11 @@ JUNK_TITLE = re.compile(
 )
 
 
+def is_english(title: str) -> bool:
+    """The desk is English only: a headline mostly in another script (Hindi, Tamil...) is not used."""
+    letters = re.findall(r"[^\W\d_]", title or "")
+    return not letters or sum(1 for c in letters if ord(c) > 0x024F) / len(letters) <= 0.2
+
+
 def is_junk(title: str) -> bool:
-    return bool(JUNK_TITLE.search(title or ""))
+    return bool(JUNK_TITLE.search(title or "")) or not is_english(title)

@@ -176,17 +176,76 @@ def test_named_accused_allowed_only_for_the_celebrity():
 def test_caps_do_not_crowd_out_regular_posts(env, monkeypatch):
     db = FakeDB()
     monkeypatch.setattr(config, "CELEBRITY_PER_DAY", 2)
-    monkeypatch.setattr(ai, "write_post", draft_for("Aamir Khan"))
-    monkeypatch.setattr(media_text(), "fetch_text", lambda u: "Aamir Khan confirmed the film release on Monday, officials said.")
-    for i in range(3):
-        star_row(db, f"Aamir Khan film update number {i} about {['Goa shoot', 'Delhi premiere', 'Paris trailer'][i]}",
-                 name="Aamir Khan", url=f"https://x/{i}")
+    monkeypatch.setattr(ai, "write_post", lambda a, b, d, **kw: draft_for(kw["celebrity"])(a, b, d))
+    monkeypatch.setattr(media_text(), "fetch_text", lambda u: "Aamir Khan Ranbir Kapoor Akshay Kumar confirmed the film release on Monday, officials said.")
+    for i, who in enumerate(["Aamir Khan", "Ranbir Kapoor", "Akshay Kumar"]):
+        star_row(db, f"{who} film update about {['Goa shoot', 'Delhi premiere', 'Paris trailer'][i]}", name=who, url=f"https://x/{i}")
     out = pipeline.celebrity_pass(db)
     assert out.count("published") == 2           # own daily cap
     posted = db.list_posted_since(ago(24))
     assert all(p["draft"]["fast_track"] for p in posted)
     plan = pipeline.plan_slot(db)
     assert "+2 celebrity fast-track" in plan["notes"][0] and "0/8" in plan["notes"][0]
+
+
+def test_followups_get_story_only_then_are_skipped(env, monkeypatch):
+    db = FakeDB()
+    stories_sent = []
+    monkeypatch.setattr(pipeline, "post_stories", lambda a, url: stories_sent.append(a["id"]))
+    monkeypatch.setattr(ai, "write_post", lambda a, b, d, **kw: draft_for("Tiger Shroff")(a, b, d))
+    monkeypatch.setattr(media_text(), "fetch_text", lambda u: "Tiger Shroff confirmed the film release on Monday, officials said.")
+    monkeypatch.setattr(config, "STORIES", True)
+    monkeypatch.setattr(pipeline.cards, "render_story", lambda *a, **k: b"img")
+    first = star_row(db, "Tiger Shroff car shooting: two held in Kota", name="Tiger Shroff", url="https://x/1")
+    pipeline.celebrity_pass(db)
+    assert db.get_article(first["id"])["status"] == "published"
+    posts_after_first = len(env["posts"])
+    # three more developments the same day: two become Stories (quota 2), the third is skipped
+    ids = [star_row(db, t, name="Tiger Shroff", url=f"https://x/f{i}")["id"] for i, t in enumerate(
+        ["Tiger Shroff shooter identity still unknown, family denies link", "Tiger Shroff case: guns brought from UP to Mumbai",
+         "Tiger Shroff case: police question four women"])]
+    out = pipeline.celebrity_pass(db)
+    assert sorted(out) == ["skipped_followup", "story_only", "story_only"]
+    assert len(env["posts"]) == posts_after_first            # no new feed posts
+    assert len(stories_sent) == 3                              # the first post's Story + two follow-up Stories
+    assert sum(1 for i in ids if db.get_article(i)["draft"] and db.get_article(i)["draft"].get("story_only")) == 2
+    assert pipeline.stories(db.list_posted_since(ago(24))) and len(pipeline.stories(db.list_posted_since(ago(24)))) == 1
+
+
+def test_critical_update_gets_one_more_post(env, monkeypatch):
+    db = FakeDB()
+    monkeypatch.setattr(ai, "write_post", lambda a, b, d, **kw: draft_for("Dharmendra")(a, b, d))
+    monkeypatch.setattr(media_text(), "fetch_text", lambda u: "Dharmendra confirmed the film release on Monday, officials said.")
+    first = star_row(db, "Dharmendra to attend film festival", name="Dharmendra", url="https://x/1")
+    pipeline.celebrity_pass(db)
+    crit = star_row(db, "Dharmendra passes away at 89, family confirms", name="Dharmendra", url="https://x/2")
+    assert pipeline.celeb_followup(db, db.get_article(crit["id"]), "Dharmendra") is False
+    assert pipeline.celebrity_pass(db) == ["published"]
+    again = star_row(db, "Dharmendra funeral held in Mumbai, last rites", name="Dharmendra", url="https://x/3")
+    assert pipeline.celeb_followup(db, db.get_article(again["id"]), "Dharmendra") is True
+
+
+def test_non_english_headlines_are_dropped(env):
+    assert safety.is_english("Tiger Shroff case: police question four women")
+    assert not safety.is_english("टाइगर श्रॉफ केस: कानपुर से आए आरोपी")
+    assert safety.is_junk("टाइगर श्रॉफ केस पुलिस ने पूछताछ की")
+
+
+def test_facebook_comment_permission_error_pauses_retries(env, monkeypatch):
+    db = FakeDB()
+    calls = []
+
+    def boom(pid, text):
+        calls.append(pid)
+        raise RuntimeError("facebook comment: HTTP 403 code=200 (#200) You do not have sufficient permissions")
+    monkeypatch.setattr(pipeline.meta, "comment_facebook", boom)
+    for i in range(3):
+        row = star_row(db, f"Floods hit region {i} badly", category="Weather & Disaster", url=f"https://x/p{i}")
+        db.update_article(row["id"], {"draft": {"threads": "t", "facebook": "f", "instagram": "i", "link": f"https://pub.example/{i}",
+                                                "card_headline": "h", "hashtags": ["Floods"]}, "card_url": "https://cards/x.jpg",
+                                      "status": "approved"})
+        pipeline.publish_article(db, db.get_article(row["id"]))
+    assert len(calls) == 1 and pipeline.fb_comment_paused(db)
 
 
 def test_switch_off_and_feeds(env, monkeypatch):

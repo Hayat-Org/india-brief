@@ -59,7 +59,7 @@ def ist_day_start(now: datetime) -> datetime:
 
 def stories(posted: list) -> list:
     """Daily caps and balance rules count news posts only, not the evening digest."""
-    return [p for p in posted if p.get("source_kind") != "digest"]
+    return [p for p in posted if p.get("source_kind") != "digest" and not (p.get("draft") or {}).get("story_only")]
 
 
 def celeb_name(a: dict) -> str:
@@ -70,6 +70,29 @@ def celeb_name(a: dict) -> str:
 
 def is_fast_track(p: dict) -> bool:
     return bool((p.get("draft") or {}).get("fast_track"))
+
+
+def story_only_used_today(db, now: datetime = None) -> int:
+    now = now or now_utc()
+    return sum(1 for p in db.list_posted_since(iso(ist_day_start(now))) if (p.get("draft") or {}).get("story_only"))
+
+
+def celeb_followup(db, a: dict, star: str, now: datetime = None) -> bool:
+    """True when this is just another development about a person already posted about in the last 24 hours
+    (so it gets a Story at most). A critical update (death, critical illness, conviction, sentence,
+    retirement) is allowed one more post per person per day."""
+    now = now or now_utc()
+    since = iso(now - timedelta(hours=24))
+    prior = [p for p in db.list_posted_since(since) + db.list_by_status("pending_review")
+             if p.get("source_kind") != "digest" and p["id"] != a["id"]
+             and not (p.get("draft") or {}).get("story_only")
+             and celebrities.same_person((p.get("draft") or {}).get("celebrity", ""), star)]
+    if not prior:
+        return False
+    head = f"{a.get('title') or ''} {a.get('snippet') or ''}"
+    if celebrities.is_critical_update(head) and not any((p.get("draft") or {}).get("critical_update") for p in prior):
+        return False
+    return True
 
 
 def celeb_single_source_ok(a: dict, name: str = "") -> bool:
@@ -564,6 +587,14 @@ def post_stories(a: dict, story_url: str) -> dict:
     return out
 
 
+def fb_comment_paused(db) -> bool:
+    try:
+        off = db.get_setting("fb_comment_off", "")
+        return bool(off) and now_utc() - parse_ts(off) < timedelta(hours=12)
+    except Exception:
+        return False
+
+
 def publish_article(db, a: dict, only: list = None) -> str:
     """Post to every configured platform independently; one failure never blocks the others.
     `only` limits the attempt to some platforms (used by Retry); earlier results are kept."""
@@ -607,7 +638,7 @@ def publish_article(db, a: dict, only: list = None) -> str:
         time.sleep(0 if config.DRY_RUN else 3)  # polite pacing between API calls
     fb = results.get("facebook") or {}
     if fb.get("ok") and not is_digest and not config.DRY_RUN and not fb.get("comment") \
-            and (not only or "facebook" in only):
+            and (not only or "facebook" in only) and not fb_comment_paused(db):
         full = clean_source_link(draft.get("link") or "")
         if full:
             try:
@@ -615,11 +646,12 @@ def publish_article(db, a: dict, only: list = None) -> str:
                 fb["comment"] = True
             except Exception as ex:
                 fb["comment"] = False
-                hint = meta.explain_error(str(ex))
-                runlog.warn(f"#{a['id']} facebook link comment: {str(ex)[:160]}"
-                            + (" → add the pages_manage_engagement permission, then run /fbtoken again"
-                               if "permission" in str(ex).lower() or "(#200)" in str(ex) or "code=10" in str(ex)
-                               else ""))
+                if "permission" in str(ex).lower() or "(#200)" in str(ex) or "code=10" in str(ex):
+                    db.set_setting("fb_comment_off", iso(now_utc()))  # stop retrying (and warning) for 12 hours
+                    runlog.warn(f"#{a['id']} facebook link comment: {str(ex)[:160]} → add the pages_manage_engagement "
+                                "permission, then run /fbtoken again. Not retried for 12 hours.")
+                else:
+                    runlog.warn(f"#{a['id']} facebook link comment: {str(ex)[:160]}")
     ok = [k for k, v in results.items() if v.get("ok")]
     failed = [k for k, v in results.items() if not v.get("ok") and not v.get("skipped")]
     update = {"status": "published" if ok else "failed", "results": results}
@@ -673,7 +705,7 @@ def fallback_photo_query(a: dict) -> str:
     return CATEGORY_PHOTO_QUERY.get(a.get("category") or "", "")
 
 
-def process_candidate(db, a: dict, breaking: bool = False, fast: bool = False) -> str:
+def process_candidate(db, a: dict, breaking: bool = False, fast: bool = False, story_only: bool = False) -> str:
     """Draft -> safety checks -> card -> (Telegram review | publish). `fast` = celebrity fast-track."""
     tag = f"#{a['id']} ({a.get('combined')}) {a['title'][:70]}"
     star = celeb_name(a)
@@ -685,6 +717,14 @@ def process_candidate(db, a: dict, breaking: bool = False, fast: bool = False) -
         runlog.note(f"{tag} → skipped: published more than {config.ARTICLE_MAX_AGE_HOURS}h ago")
         return "stale"
     mode = get_mode(db)
+    if star and a.get("status") == "candidate" and celeb_followup(db, a, star):
+        story_only = True
+    if mode != "auto":
+        story_only = False  # review mode: every item is reviewed as a normal post
+    if story_only and (not config.STORIES or story_only_used_today(db) >= config.STORY_ONLY_PER_DAY):
+        db.update_article(a["id"], {"status": "discarded", "hold_reason": "follow-up on a topic already posted"})
+        runlog.note(f"{tag} → skipped: follow-up on a topic already posted today")
+        return "skipped_followup"
     spotlight = bool(a.get("spotlight"))
     link = media.resolve_url(a["url"])
     body = media.fetch_text(link)
@@ -759,6 +799,9 @@ def process_candidate(db, a: dict, breaking: bool = False, fast: bool = False) -
     draft["careful"], draft["careful_reasons"] = careful, tier_reasons
     if star:
         draft["celebrity"], draft["fast_track"] = star, bool(fast)
+        draft["critical_update"] = celebrities.is_critical_update(f"{a['title']} {a.get('snippet') or ''}")
+    if story_only:
+        draft["story_only"] = True
     flags, hold = [], []
     if tier == "blocked":
         flags.append("Blocked by law/policy: " + "; ".join(tier_reasons))
@@ -802,6 +845,16 @@ def process_candidate(db, a: dict, breaking: bool = False, fast: bool = False) -
         db.update_article(a["id"], {**update, "status": "discarded"})
         runlog.note(f"{tag} → not posted, safety rule: {'; '.join(hold)}")
         return "skipped_safety"
+    if story_only and not hold and mode == "auto":
+        # A follow-up development: no new feed post, just a Story (the earlier post stays the main one).
+        db.update_article(a["id"], {**update, "status": "published", "posted_at": iso(now_utc()),
+                                    "results": {"story_only": True}})
+        if draft.get("story_url") and not config.DRY_RUN:
+            post_stories(a, draft["story_url"])
+        runlog.note(f"{tag} → follow-up: Story only, no new feed post")
+        runlog.activity()
+        telegram.send_text(f"Story only #{a['id']}: {a['title'][:90]}\n(follow-up on a topic already posted)")
+        return "story_only"
     if mode != "auto":  # approvals were switched back on with /review
         telegram.send_review(merged, draft, card_url, flags)
         db.update_article(a["id"], {**update, "status": "pending_review",
@@ -1031,6 +1084,13 @@ def breaking_pass(db, now: datetime = None) -> list:
     used = sum(1 for p in posted if p.get("breaking"))
     used += sum(1 for p in db.list_by_status("pending_review") if p.get("breaking"))
     out = []
+    recent = stories(db.list_posted_since(iso(now - timedelta(hours=config.URGENT_FOLLOWUP_HOURS))))
+
+    def urgent_followup(a) -> bool:  # same state + category already posted recently = a development, not a new event
+        st = a.get("state")
+        return st not in (None, "", "National") and any(
+            p.get("state") == st and p.get("category") == a.get("category") for p in recent)
+
     cands = [a for a in db.list_by_status("candidate")
              if (((a.get("combined") or 0) >= config.BREAKING_SCORE
                   and (a.get("corroboration") or 1) >= config.BREAKING_MIN_SOURCES) or is_urgent(a))
@@ -1040,7 +1100,7 @@ def breaking_pass(db, now: datetime = None) -> list:
         if used >= config.MAX_BREAKING_PER_DAY or len(posted) + len(out) >= config.MAX_POSTS_PER_DAY:
             break
         runlog.note(f"⚡ Urgent fast-track: #{a['id']} ({a['combined']}, {a.get('corroboration')} outlet(s)) {a['title'][:80]}")
-        out.append(process_candidate(db, a, breaking=True))
+        out.append(process_candidate(db, a, breaking=True, story_only=urgent_followup(a)))
         used += 1
     return out
 

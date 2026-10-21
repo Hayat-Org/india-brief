@@ -109,7 +109,9 @@ SPOTLIGHT_AUTO = env("SPOTLIGHT_AUTO", "1") == "1"  # 0 = Spotlight posts from n
 # Celebrity fast-track: stories about well-known people post as soon as they are scored and checked,
 # without waiting for a slot. Own daily cap; it does not use up MAX_POSTS_PER_DAY or MAX_CAREFUL_PER_DAY.
 CELEBRITY_FAST = env("CELEBRITY_FAST", "1") == "1"
-CELEBRITY_PER_DAY = _int("CELEBRITY_PER_DAY", 6)
+CELEBRITY_PER_DAY = _int("CELEBRITY_PER_DAY", 3)
+STORY_ONLY_PER_DAY = _int("STORY_ONLY_PER_DAY", 2)          # follow-up developments get a Story only, up to this many a day
+URGENT_FOLLOWUP_HOURS = _int("URGENT_FOLLOWUP_HOURS", 12)   # same state + category again within this time = follow-up
 CELEBRITY_MIN_SCORE = _float("CELEBRITY_MIN_SCORE", 3.5)   # normal minimum is MIN_SCORE
 CELEBRITY_BONUS = _float("CELEBRITY_BONUS", 0.8)
 CELEBWATCH_SCORE_LIMIT = _int("CELEBWATCH_SCORE_LIMIT", 30)  # stories scored per fast-track watch run

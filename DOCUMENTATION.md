@@ -107,7 +107,8 @@ flowchart TD
 - The person is named in the headline and every post text (otherwise the draft is retried) and is the first hashtag, except on careful crime stories.
 - Urgent and critical news uses the same fast lane (`breaking_pass`): significance 9+, or 8+ with an emergency word in the headline (lockdown, curfew, evacuation, earthquake, cyclone, terror attack, stampede, war, nationwide...), carried by one trusted source (main outlet, official, fact-checker) or by 2+ outlets; the older rule (score 8.8+ with 2+ outlets) still applies. Cap `MAX_BREAKING_PER_DAY` 3. Careful-topic rules and the election-silence block still apply.
 - The hourly ingest also runs both fast lanes, so a celebrity or urgent story waits at most about an hour even between watch runs.
-- Cap: 6 fast-track posts a day (`CELEBRITY_PER_DAY`), separate from the 8 regular posts and the 4 careful posts. Switch off with `CELEBRITY_FAST=0`.
+- One post per person per topic: a later development about the same person within 24 hours is a follow-up. It gets a Story only (no feed post), at most 2 a day (`STORY_ONLY_PER_DAY`); the rest are skipped. A critical update (death or critical illness, conviction or sentence, retirement) is allowed one more post per person per day. Urgent news follows the same idea: a second urgent story in the same state and category within 12 hours is a Story only.
+- Cap: 3 fast-track posts a day (`CELEBRITY_PER_DAY`), separate from the 8 regular posts and the 4 careful posts. Switch off with `CELEBRITY_FAST=0`.
 - Photos: the person-free photo rule is unchanged, so these posts use a place or scene photo or the plain card, never a photo of the celebrity.
 
 ## 6. Safety and legal rules
@@ -172,7 +173,7 @@ Every run reports what ran, what was chosen, why anything was skipped, AI usage,
 
 Secrets are GitHub Actions secrets only and are redacted from logs: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_BUCKET`, `GROQ_API_KEY`, `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `THREADS_USER_ID`, `THREADS_ACCESS_TOKEN`, `FB_PAGE_ID`, `FB_PAGE_TOKEN`, `IG_USER_ID`, `IG_TOKEN`, `FB_APP_ID`, `FB_APP_SECRET`, optional `PIXABAY_API_KEY`, `PEXELS_API_KEY`, and `ELECTION_SILENCE` (for example `[["2026-11-01","2026-11-03"]]`, IST, inclusive).
 
-Tunables: `MAX_POSTS_PER_DAY` 8, `MAX_POSTS_PER_SLOT` 2, `MAX_CAREFUL_PER_DAY` 4, `CELEBRITY_PER_DAY` 6, `CELEBRITY_MIN_SCORE` 3.5, `CELEBRITY_FAST` 1, `MAX_POLITICS_PER_DAY` 2, `ARTICLE_MAX_AGE_HOURS` 48, `DATA_RETENTION_HOURS` 72, `STORIES` 1, `USE_PHOTOS` 1, `REPORT_LEVEL`, `DEFAULT_MODE` auto.
+Tunables: `MAX_POSTS_PER_DAY` 8, `MAX_POSTS_PER_SLOT` 2, `MAX_CAREFUL_PER_DAY` 4, `CELEBRITY_PER_DAY` 3, `STORY_ONLY_PER_DAY` 2, `CELEBRITY_MIN_SCORE` 3.5, `CELEBRITY_FAST` 1, `MAX_POLITICS_PER_DAY` 2, `ARTICLE_MAX_AGE_HOURS` 48, `DATA_RETENTION_HOURS` 72, `STORIES` 1, `USE_PHOTOS` 1, `REPORT_LEVEL`, `DEFAULT_MODE` auto.
 
 ## 12. Operations
 
@@ -187,7 +188,7 @@ On demand (GitHub → Actions → Run workflow): Diagnose, Publish slot, Clean o
 | Photo missing | No licensed person-free match | Plain card, no action |
 | Outlet name instead of link | Google News link not resolved | Cosmetic |
 
-112 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
+116 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
 
 ## 13. Known limits and ideas
 

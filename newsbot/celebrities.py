@@ -58,6 +58,22 @@ RUMOUR = re.compile(r"\b(rumou?rs?|reportedly|speculat\w*|sources? (say|claim|re
                     r"link-?ups?|dating|affair|netizens|trolled|allegedly (dating|cheat)|unconfirmed)\b", re.I)
 
 
+CRITICAL_UPDATE = re.compile(r"\b(dies|died|death|passes away|passed away|demise|no more|last rites|funeral|"
+                             r"critical condition|life support|convicted|sentenced|retire[sd]?|retirement)\b", re.I)
+
+
+def is_critical_update(text: str) -> bool:
+    """A development big enough for a second post about the same person (death, critical illness,
+    conviction or sentence, retirement). Everything else about that person is a follow-up."""
+    return bool(CRITICAL_UPDATE.search(text or ""))
+
+
+def same_person(a: str, b: str) -> bool:
+    la = [w for w in re.findall(r"[a-z]+", (a or "").lower()) if len(w) > 2]
+    lb = [w for w in re.findall(r"[a-z]+", (b or "").lower()) if len(w) > 2]
+    return bool(la and lb and la[-1] == lb[-1])
+
+
 def match(text: str) -> str:
     """Full name of the first roster celebrity found in the text, else ''."""
     m = _PATTERN.search(text or "")
