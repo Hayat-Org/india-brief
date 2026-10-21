@@ -102,3 +102,7 @@ Posts show `Source: <short url>` instead of the outlet name; body text states fa
 The image carries only headline and brand; photo credit (needed for CC BY) stays in the caption.
 Residual risk: dropping outlet attribution from the text shifts defamation exposure onto the page for allegations;
 keep "police said / alleged" wording and consult a lawyer.
+
+## 21 Oct update: celebrity fast-track
+
+Stories about well-known people post without waiting for a slot, on one trusted source. Risk handling: defamation (BNS) is managed by attributing every allegation to police, a complaint or a court and never calling anyone guilty; death and illness reports from non-mainstream sources and rumour-style stories wait for a second outlet; survivors, minors and families are never identified (BNS s.72, POCSO s.23, JJ Act s.74); photos of the person are not used (copyright and personality-rights risk); the election-silence block still applies. A lawyer should review this lane when the policy document is reviewed.

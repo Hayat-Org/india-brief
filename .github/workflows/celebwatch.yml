@@ -1,0 +1,86 @@
+name: Celebrity watch (every 20 min)
+
+on:
+  schedule:
+    - cron: "7,27,47 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+jobs:
+  celebwatch:
+    permissions:
+      contents: read
+      issues: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m newsbot.celebwatch
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          DATA_RETENTION_HOURS: ${{ secrets.DATA_RETENTION_HOURS }}
+          MAX_CAREFUL_PER_DAY: ${{ secrets.MAX_CAREFUL_PER_DAY }}
+          USE_PHOTOS: ${{ secrets.USE_PHOTOS }}
+          GEMINI_MODELS: ${{ secrets.GEMINI_MODELS }}
+          GROQ_FAST_MODEL: ${{ secrets.GROQ_FAST_MODEL }}
+          GROQ_QUALITY_MODEL: ${{ secrets.GROQ_QUALITY_MODEL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
+          FB_APP_ID: ${{ secrets.FB_APP_ID }}
+          FB_APP_SECRET: ${{ secrets.FB_APP_SECRET }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          BRAND_NAME: ${{ secrets.BRAND_NAME }}
+          BRAND_HANDLE: ${{ secrets.BRAND_HANDLE }}
+          USE_GOOGLE_NEWS: ${{ secrets.USE_GOOGLE_NEWS }}
+          ATTACH_LINKS: ${{ secrets.ATTACH_LINKS }}
+          MAX_POSTS_PER_DAY: ${{ secrets.MAX_POSTS_PER_DAY }}
+          MAX_POLITICS_PER_DAY: ${{ secrets.MAX_POLITICS_PER_DAY }}
+          ELECTION_SILENCE: ${{ secrets.ELECTION_SILENCE }}
+          SPOTLIGHT_AUTO: ${{ secrets.SPOTLIGHT_AUTO }}
+          REPORT_LEVEL: ${{ secrets.REPORT_LEVEL }}
+          ARTICLE_MAX_AGE_HOURS: ${{ secrets.ARTICLE_MAX_AGE_HOURS }}
+          MAX_PENDING_REVIEW: ${{ secrets.MAX_PENDING_REVIEW }}
+          CELEBRITY_FAST: ${{ secrets.CELEBRITY_FAST }}
+          CELEBRITY_PER_DAY: ${{ secrets.CELEBRITY_PER_DAY }}
+          CELEBRITY_MIN_SCORE: ${{ secrets.CELEBRITY_MIN_SCORE }}
+      - name: Tell me on Telegram if this run crashed
+        if: failure()
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -f .reported ] && exit 0  # the job already told you itself
+          [ -n "$TG_TOKEN" ] && curl -s -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            --data-urlencode "chat_id=$TG_CHAT" \
+            --data-urlencode "text=❌ GitHub run failed: ${{ github.workflow }}
+          $RUN_URL
+          Open the link, or run the 'Diagnose' workflow for a full check." > /dev/null || true
+      - name: Save the error log to a GitHub issue (secrets removed)
+        if: always() && hashFiles('crash_report.txt') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N=$(gh issue list --state open --search "Run errors in:title" --json number --jq '.[0].number')
+          if [ -z "$N" ]; then
+            gh issue create --title "Run errors" --body "Automatic error log written by the bot. Secrets are removed. Safe to close." > issue.txt
+            N=$(grep -o '[0-9]*$' issue.txt)
+          fi
+          gh issue comment "$N" --body-file crash_report.txt

@@ -57,6 +57,9 @@ jobs:
           REPORT_LEVEL: ${{ secrets.REPORT_LEVEL }}
           ARTICLE_MAX_AGE_HOURS: ${{ secrets.ARTICLE_MAX_AGE_HOURS }}
           MAX_PENDING_REVIEW: ${{ secrets.MAX_PENDING_REVIEW }}
+          CELEBRITY_FAST: ${{ secrets.CELEBRITY_FAST }}
+          CELEBRITY_PER_DAY: ${{ secrets.CELEBRITY_PER_DAY }}
+          CELEBRITY_MIN_SCORE: ${{ secrets.CELEBRITY_MIN_SCORE }}
       - name: Tell me on Telegram if this run crashed
         if: failure()
         env:

@@ -32,7 +32,7 @@ def redact(text: str) -> str:
     text = re.sub(r"(access_token|key|apikey|token)=[^&\s'\"]+", r"\1=<hidden>", text)
     return text
 
-JOBS = ("ingest", "publish", "digest", "health", "poll")
+JOBS = ("ingest", "publish", "digest", "health", "poll", "celebwatch")
 
 
 class RunLog:

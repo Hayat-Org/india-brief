@@ -10,7 +10,7 @@ from email.utils import parsedate_to_datetime
 import requests
 from bs4 import BeautifulSoup
 
-from . import ai, cards, config, dedup, hashtags, media, meta, photos, runlog, safety, telegram
+from . import celebrities, ai, cards, config, dedup, hashtags, media, meta, photos, runlog, safety, telegram
 from . import trends as trendlib
 from .sources import Feed, fallback_feed
 
@@ -60,6 +60,30 @@ def ist_day_start(now: datetime) -> datetime:
 def stories(posted: list) -> list:
     """Daily caps and balance rules count news posts only, not the evening digest."""
     return [p for p in posted if p.get("source_kind") != "digest"]
+
+
+def celeb_name(a: dict) -> str:
+    """The well-known person this story is about ('' if none): the AI's pick saved at scoring, else the roster."""
+    return ((a.get("draft") or {}).get("celebrity")
+            or celebrities.match(f"{a.get('title') or ''} {a.get('snippet') or ''}"))
+
+
+def is_fast_track(p: dict) -> bool:
+    return bool((p.get("draft") or {}).get("fast_track"))
+
+
+def celeb_single_source_ok(a: dict, name: str = "") -> bool:
+    """Can ONE source carry this celebrity story? A mainstream/official/fact-check source can, unless it is a
+    rumour. A death or illness report from anything else (regional, specialist, Google News regional search)
+    waits for a second outlet: celebrity death hoaxes are common."""
+    if (a.get("corroboration") or 1) >= 2 or a.get("source_kind") in ("govt", "factcheck"):
+        return True
+    head = f"{a.get('title') or ''} {a.get('snippet') or ''}"
+    if celebrities.is_rumour(head):
+        return False
+    if celebrities.is_death_story(head):
+        return a.get("source_kind", "news") == "news"
+    return True
 
 
 def is_paused(db) -> bool:
@@ -228,7 +252,8 @@ def ingest(db, entries: list, now: datetime = None) -> dict:
     now = now or now_utc()
     recent = db.recent_articles(72)
     known_urls = {r["url"] for r in recent if r.get("url")}
-    stats = {"seen": len(entries), "new": 0, "merged": 0, "dup": 0, "junk": 0, "old": 0, "niche_new": 0}
+    stats = {"seen": len(entries), "new": 0, "merged": 0, "dup": 0, "junk": 0, "old": 0, "niche_new": 0,
+             "new_ids": []}
     max_age = timedelta(hours=config.ARTICLE_MAX_AGE_HOURS)
 
     for e in sorted(entries, key=lambda x: x.published, reverse=True):
@@ -266,6 +291,7 @@ def ingest(db, entries: list, now: datetime = None) -> dict:
             continue
         recent.insert(0, row)
         stats["new"] += 1
+        stats["new_ids"].append(row["id"])
         if e.kind in SPOTLIGHT_SOURCE_KINDS:
             stats["niche_new"] += 1
     return stats
@@ -278,14 +304,18 @@ def score_priority(a: dict) -> float:
     """Which stories get scored first when more arrive than the per-run limit.
     Multi-outlet stories first, and specialist/official/fact-check sources get a boost so
     under-covered stories are not starved by the volume of mainstream headlines."""
-    return min(a.get("corroboration") or 1, 4) + (1.5 if a.get("source_kind") in ("govt", "factcheck", "niche") else 0)
+    boost = 3 if celebrities.match(f"{a.get('title') or ''} {a.get('snippet') or ''}") else 0  # famous people first
+    return min(a.get("corroboration") or 1, 4) + (1.5 if a.get("source_kind") in ("govt", "factcheck", "niche") else 0) + boost
 
 
-def score_pending(db, now: datetime = None, trends: dict = None) -> dict:
+def score_pending(db, now: datetime = None, trends: dict = None, only_ids: set = None, limit: int = None) -> dict:
+    """Score new stories. `only_ids`/`limit` let the 20-minute celebrity run score just its own fresh items."""
     now = now or now_utc()
     new = db.list_by_status("new", limit=500)
+    if only_ids is not None:
+        new = [a for a in new if a["id"] in only_ids]
     stats = {"scored": 0, "candidates": 0, "discarded": 0, "errors": 0, "stale": 0, "backlog": 0,
-             "below_min": 0, "not_india": 0, "opinion": 0, "promo": 0, "niche_candidates": 0,
+             "below_min": 0, "not_india": 0, "opinion": 0, "promo": 0, "niche_candidates": 0, "celebrity": 0,
              "error_samples": [], "top": []}
     fresh = []
     for a in new:
@@ -296,7 +326,7 @@ def score_pending(db, now: datetime = None, trends: dict = None) -> dict:
             fresh.append(a)
     fresh.sort(key=score_priority, reverse=True)  # stable: newest first among equals
     ist_hour = now.astimezone(timezone(timedelta(hours=5, minutes=30))).hour
-    limit = config.MAX_SCORE_PER_RUN if ist_hour >= 7 else max(8, config.MAX_SCORE_PER_RUN // 3)  # quiet hours: little news
+    limit = limit or (config.MAX_SCORE_PER_RUN if ist_hour >= 7 else max(8, config.MAX_SCORE_PER_RUN // 3))  # quiet hours: little news
     todo = fresh[:limit]
     stats["backlog"] = len(fresh) - len(todo)
     size, failed_chunks = max(1, config.SCORE_BATCH_SIZE), 0
@@ -331,10 +361,12 @@ def score_pending(db, now: datetime = None, trends: dict = None) -> dict:
             keyword_reason = safety.is_sensitive(f"{a['title']} {a.get('snippet') or ''}")
             sensitive = s["sensitive"] or bool(keyword_reason)
             reason = s["sensitive_reason"] or keyword_reason or ""
+            star = s.get("celebrity") or celebrities.match(f"{a['title']} {a.get('snippet') or ''}")
+            combined = min(10.0, round(s["combined"] + config.CELEBRITY_BONUS, 1)) if star else s["combined"]
             values = {
                 "category": s["category"], "state": s["state"],
                 "significance": s["significance"], "impact": s["impact"], "interest": s["interest"],
-                "combined": s["combined"], "sensitive": sensitive, "sensitive_reason": reason,
+                "combined": combined, "sensitive": sensitive, "sensitive_reason": reason,
                 "is_factcheck": s["is_factcheck"],
                 "trend_boost": trendlib.trend_boost(a["title"], trends or {}),
             }
@@ -344,14 +376,17 @@ def score_pending(db, now: datetime = None, trends: dict = None) -> dict:
                 values["status"] = "discarded"; stats["opinion"] += 1
             elif s["is_promotional"]:
                 values["status"] = "discarded"; stats["promo"] += 1
-            elif s["combined"] < config.MIN_SCORE:
+            elif combined < (config.CELEBRITY_MIN_SCORE if star else config.MIN_SCORE):
                 values["status"] = "discarded"; stats["below_min"] += 1
             else:
                 values["status"] = "candidate"
                 stats["candidates"] += 1
+                if star:
+                    values["draft"] = {"celebrity": star}  # remembered for the fast-track (no extra column needed)
+                    stats["celebrity"] += 1
                 if a.get("source_kind") in SPOTLIGHT_SOURCE_KINDS and mainstream_count(a) == 0:
                     stats["niche_candidates"] += 1
-                stats["top"].append((s["combined"], a["title"], s["category"], s["state"],
+                stats["top"].append((combined, a["title"], s["category"], s["state"],
                                      a.get("corroboration") or 1))
             if values["status"] == "discarded":
                 stats["discarded"] += 1
@@ -463,7 +498,7 @@ def careful_used_today(db, now: datetime = None) -> int:
     """Crime/violence/legal posts already published or queued today (political ones have their own cap)."""
     now = now or now_utc()
     rows = stories(db.list_posted_since(iso(ist_day_start(now)))) + stories(db.list_by_status("pending_review"))
-    return sum(1 for p in rows if (p.get("draft") or {}).get("careful")
+    return sum(1 for p in rows if (p.get("draft") or {}).get("careful") and not is_fast_track(p)
                and (p["draft"].get("careful_reasons") or []) != ["political story"])
 
 
@@ -638,9 +673,13 @@ def fallback_photo_query(a: dict) -> str:
     return CATEGORY_PHOTO_QUERY.get(a.get("category") or "", "")
 
 
-def process_candidate(db, a: dict, breaking: bool = False) -> str:
-    """Draft -> safety checks -> card -> (Telegram review | publish)."""
+def process_candidate(db, a: dict, breaking: bool = False, fast: bool = False) -> str:
+    """Draft -> safety checks -> card -> (Telegram review | publish). `fast` = celebrity fast-track."""
     tag = f"#{a['id']} ({a.get('combined')}) {a['title'][:70]}"
+    star = celeb_name(a)
+    if star and a.get("status") == "candidate" and not celeb_single_source_ok(a, star):
+        runlog.note(f"{tag} → waiting for a second source ({star}: rumour or unconfirmed death/illness report)")
+        return "deferred"
     if is_too_old(a):
         db.update_article(a["id"], {"status": "discarded", "hold_reason": "stale"})
         runlog.note(f"{tag} → skipped: published more than {config.ARTICLE_MAX_AGE_HOURS}h ago")
@@ -666,22 +705,32 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
         # One big mainstream outlet is enough for incidents, accidents, disasters and politics; sexual-offence,
         # minor and pending-case stories still need a second outlet or an official source.
         needs_two = {"sexual offence", "minor involved", "legal risk", "communal/mob violence"} & set(tier_reasons)
+        if star:  # famous person: a pending case (FIR, arrest, court) can go out on one trusted source
+            needs_two -= {"legal risk"}
+            if not strong and not needs_two and celeb_single_source_ok(a, star):
+                strong = True
         if not strong and not needs_two and mainstream_count(a) >= 1:
             strong = True
         if not strong:
             db.update_article(a["id"], {"status": "discarded", "hold_reason": "careful story, single source"})
             runlog.note(f"{tag} → not posted: sensitive story ({'; '.join(tier_reasons)}) needs 2+ outlets or an official source")
             return "skipped_safety"
-        if tier_reasons != ["political story"] and careful_used_today(db) >= config.MAX_CAREFUL_PER_DAY:
+        if tier_reasons != ["political story"] and not star and careful_used_today(db) >= config.MAX_CAREFUL_PER_DAY:
             runlog.note(f"{tag} → deferred: today's limit of {config.MAX_CAREFUL_PER_DAY} crime/violence/legal posts is used")
             return "deferred"
 
     kw = {"careful": True, "reasons": tier_reasons} if careful else {}
+    if star:
+        kw["celebrity"] = star
 
     def check(d):
         d = {**d, "careful_reasons": tier_reasons}
         found = safety.check_draft(d, facts, thin=not body)
-        return found + (safety.careful_issues(d, facts) if careful else [])
+        if star:
+            for platform in ("threads", "facebook", "instagram", "card_headline"):
+                if not celebrities.name_in_text(star, d.get(platform) or ""):
+                    found.append(f"{platform}: does not name {star}")
+        return found + (safety.careful_issues(d, facts, allow_name=star) if careful else [])
 
     try:
         draft = ai.write_post(a, body, developing, **kw)
@@ -708,6 +757,8 @@ def process_candidate(db, a: dict, breaking: bool = False) -> str:
     draft["link"], draft["developing"], draft["spotlight"] = link, developing, spotlight
     draft["short_url"] = short
     draft["careful"], draft["careful_reasons"] = careful, tier_reasons
+    if star:
+        draft["celebrity"], draft["fast_track"] = star, bool(fast)
     flags, hold = [], []
     if tier == "blocked":
         flags.append("Blocked by law/policy: " + "; ".join(tier_reasons))
@@ -809,10 +860,13 @@ def plan_slot(db, now: datetime = None, exclude: set = None, used_cats: set = No
     posted_today = stories(db.list_posted_since(iso(ist_day_start(now))))
     pending_all = db.list_by_status("pending_review")
     pending = stories(pending_all)
-    notes = [f"Today so far: {len(posted_today)}/{config.MAX_POSTS_PER_DAY} posted · "
+    fast_n = sum(1 for p in posted_today if is_fast_track(p))
+    notes = [f"Today so far: {len(posted_today) - fast_n}/{config.MAX_POSTS_PER_DAY} posted"
+             f"{f' (+{fast_n} celebrity fast-track)' if fast_n else ''} · "
              f"{len(pending_all)} waiting for your tap · mode: {get_mode(db)}"]
-    allowed = min(config.MAX_POSTS_PER_SLOT, config.MAX_POSTS_PER_DAY - len(posted_today))
-    if config.MAX_POSTS_PER_DAY - len(posted_today) <= 0:
+    regular = [p for p in posted_today if not is_fast_track(p)]  # celebrity fast-track posts have their own cap
+    allowed = min(config.MAX_POSTS_PER_SLOT, config.MAX_POSTS_PER_DAY - len(regular))
+    if config.MAX_POSTS_PER_DAY - len(regular) <= 0:
         notes.append(f"⛔ Daily limit reached ({config.MAX_POSTS_PER_DAY} posts). Nothing more today.")
         return {"picked": [], "notes": notes}
     if get_mode(db) != "auto":
@@ -909,6 +963,45 @@ def run_slot(db, now: datetime = None) -> dict:
         if sum(1 for o in outcomes if o in ("published", "sent_for_review")) >= config.MAX_POSTS_PER_SLOT:
             break
     return {"processed": len(outcomes), "outcomes": outcomes}
+
+
+def celebrity_pass(db, now: datetime = None) -> list:
+    """Fast-track for well-known people: post as soon as the story is scored, without waiting for a slot.
+    One database check for duplicates first; one trusted source is enough (see celeb_single_source_ok)."""
+    now = now or now_utc()
+    if not config.CELEBRITY_FAST or is_paused(db):
+        return []
+    todays = stories(db.list_posted_since(iso(ist_day_start(now)))) + stories(db.list_by_status("pending_review"))
+    used = sum(1 for p in todays if is_fast_track(p))
+    cands = [a for a in db.list_by_status("candidate")
+             if celeb_name(a) and a.get("combined") is not None and not is_too_old(a, now)]
+    cands.sort(key=lambda a: (a.get("corroboration") or 1, a["combined"]), reverse=True)
+    out, waiting = [], 0
+    for a in cands:
+        star = celeb_name(a)
+        if used >= config.CELEBRITY_PER_DAY:
+            runlog.note(f"⭐ Celebrity fast-track: daily limit of {config.CELEBRITY_PER_DAY} reached; the rest wait for a normal slot")
+            break
+        if not celeb_single_source_ok(a, star):
+            waiting += 1
+            continue
+        handled = [r for r in db.recent_articles(config.DATA_RETENTION_HOURS)
+                   if r["id"] != a["id"] and r.get("status") in ("published", "approved", "pending_review")]
+        dup = dedup.find_match(a["title"], handled)
+        if dup:
+            db.update_article(a["id"], {"status": "discarded", "hold_reason": f"duplicate of #{dup['id']}"})
+            runlog.note(f"⭐ #{a['id']} {star}: already covered (#{dup['id']}), skipped")
+            continue
+        runlog.note(f"⭐ Celebrity fast-track: #{a['id']} ({a['combined']}) {star} · {a['title'][:80]}")
+        result = process_candidate(db, a, fast=True)
+        out.append(result)
+        if result in ("published", "sent_for_review"):
+            used += 1
+        elif result == "deferred":
+            break  # AI free limit: try again on the next run
+    if waiting:
+        runlog.note(f"⭐ {waiting} celebrity stor{'y' if waiting == 1 else 'ies'} waiting for a second source")
+    return out
 
 
 def breaking_pass(db, now: datetime = None) -> list:

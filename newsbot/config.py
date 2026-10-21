@@ -104,6 +104,14 @@ SPOTLIGHT_MIN_VALUE = _float("SPOTLIGHT_MIN_VALUE", 6.0)   # (significance + imp
 SPOTLIGHT_MIN_AGE_HOURS = _int("SPOTLIGHT_MIN_AGE_HOURS", 2)  # give mainstream a chance to pick it up first
 SPOTLIGHT_AUTO = env("SPOTLIGHT_AUTO", "1") == "1"  # 0 = Spotlight posts from non-official sources are skipped (or reviewed)
 
+# Celebrity fast-track: stories about well-known people post as soon as they are scored and checked,
+# without waiting for a slot. Own daily cap; it does not use up MAX_POSTS_PER_DAY or MAX_CAREFUL_PER_DAY.
+CELEBRITY_FAST = env("CELEBRITY_FAST", "1") == "1"
+CELEBRITY_PER_DAY = _int("CELEBRITY_PER_DAY", 6)
+CELEBRITY_MIN_SCORE = _float("CELEBRITY_MIN_SCORE", 3.5)   # normal minimum is MIN_SCORE
+CELEBRITY_BONUS = _float("CELEBRITY_BONUS", 0.8)
+CELEBWATCH_SCORE_LIMIT = _int("CELEBWATCH_SCORE_LIMIT", 16)  # stories scored per 20-minute celebrity run
+
 POLL_SECONDS = _int("POLL_SECONDS", 240)  # how long each approvals run keeps listening for taps
 
 # Photos: copyright-safe images only (Wikimedia Commons CC0/PD/CC BY, optional Pexels). See photos.py.

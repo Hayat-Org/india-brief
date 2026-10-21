@@ -2,7 +2,7 @@
 
 India In Short is a fully automated, free, India-only news desk. It picks the day's most important India stories, rewrites them in plain, neutral language, checks them, and posts them to Threads, Facebook and Instagram (plus Instagram and Facebook Stories) with a licensed photo and a short source link. Brand: India In Short, @indiainshort.daily (Instagram, Threads), indiainshort.news (Facebook Page). English only.
 
-Last updated: 19 Oct 2026. The editable version with drawn flowcharts is the "India In Short – Project Documentation" doc in Claude; this file is the repository copy with Mermaid diagrams.
+Last updated: 21 Oct 2026. The editable version with drawn flowcharts is the "India In Short – Project Documentation" doc in Claude; this file is the repository copy with Mermaid diagrams.
 
 ## 1. At a glance
 
@@ -46,6 +46,7 @@ flowchart LR
 | Ingest | Hourly | Reads feeds, dedupes, scores with AI, deletes data older than 72 h |
 | Publish slot | 07:35, 12:35, 18:35, 21:05 | Selects, drafts, checks, posts, posts Stories |
 | Digest | 22:10 | "Today in short" carousel |
+| Celebrity watch | Every 20 min | Reads entertainment, sports and business feeds; posts stories about well-known people right away |
 | Telegram approvals | Every 5 min | Commands and buttons |
 | Health | Daily 18:10, weekly Monday 08:45 | Tokens, dead feeds |
 | Keepalive | 1st and 15th of month | Keeps schedules active |
@@ -79,6 +80,33 @@ flowchart TD
 Bonuses: critical (significance 8+) +0.5, important (impact 8+) +0.3, trending search in India +0.6 (+1.0 with 100K+ searches). Outrage never raises a score.
 
 Limits: 8 posts/day, 2 per slot, one story per category per slot; breaking (score 8.8+, 2+ outlets) max 2/day; politics max 2/day; careful stories max 4/day; Spotlight (specialist, regional or official sources not yet carried by big outlets, civic value 6.0+, waited 2 h) max 1/day; nothing older than 48 h. A skipped story is replaced by the next best, up to 4 rounds.
+
+### Celebrity fast-track
+
+Stories about well-known people (film, TV and music stars, cricketers and other athletes, influencers, business leaders, authors; not politicians, officials or religious leaders) skip the slot queue and post as soon as they are scored and checked.
+
+```mermaid
+flowchart TD
+  A[Feeds: hourly ingest + 20-min Celebrity watch] --> B[Score, famous names first]
+  B --> C{Celebrity? AI field or built-in name list}
+  C -- no --> Q[Normal slot queue]
+  C -- yes --> D{Already in the database?<br/>published, approved or pending, 72 h}
+  D -- yes --> X[Skipped as duplicate]
+  D -- no --> E{Trusted single source?<br/>not a rumour, death report only from a main outlet}
+  E -- no --> W[Waits for a second outlet]
+  E -- yes --> F[Draft names the person, careful rules if legal or crime]
+  F --> G{Checks pass?}
+  G -- no --> R[Retry once, then skipped]
+  G -- yes --> P[Posted now with Stories]
+```
+
+- Detection: the AI scorer returns a `celebrity` name; `celebrities.py` is the backup list (extend it any time). The name is kept in the story's `draft` field, so no database change is needed.
+- Bar: minimum score 3.5 instead of 5.5, plus 0.8. Opinion, promotional and non-India items are still dropped.
+- Sources: one main outlet, an official source or a fact-checker is enough; a regional or specialist source is enough unless the story is a death or illness report (hoax risk). Rumour wording ("reportedly", "dating", "sources say") needs two outlets.
+- Legal and crime stories about a celebrity can go out on one trusted source, in careful wording: the person may be named as the subject, every allegation is attributed to police, the complaint or the court, no guilt labels. Sexual-offence and minor cases still need two outlets or an official source, and survivors, minors and families are never identified.
+- The person is named in the headline and every post text (otherwise the draft is retried) and is the first hashtag, except on careful crime stories.
+- Cap: 6 fast-track posts a day (`CELEBRITY_PER_DAY`), separate from the 8 regular posts and the 4 careful posts. Switch off with `CELEBRITY_FAST=0`.
+- Photos: the person-free photo rule is unchanged, so these posts use a place or scene photo or the plain card, never a photo of the celebrity.
 
 ## 6. Safety and legal rules
 
@@ -142,7 +170,7 @@ Every run reports what ran, what was chosen, why anything was skipped, AI usage,
 
 Secrets are GitHub Actions secrets only and are redacted from logs: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_BUCKET`, `GROQ_API_KEY`, `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `THREADS_USER_ID`, `THREADS_ACCESS_TOKEN`, `FB_PAGE_ID`, `FB_PAGE_TOKEN`, `IG_USER_ID`, `IG_TOKEN`, `FB_APP_ID`, `FB_APP_SECRET`, optional `PIXABAY_API_KEY`, `PEXELS_API_KEY`, and `ELECTION_SILENCE` (for example `[["2026-11-01","2026-11-03"]]`, IST, inclusive).
 
-Tunables: `MAX_POSTS_PER_DAY` 8, `MAX_POSTS_PER_SLOT` 2, `MAX_CAREFUL_PER_DAY` 4, `MAX_POLITICS_PER_DAY` 2, `ARTICLE_MAX_AGE_HOURS` 48, `DATA_RETENTION_HOURS` 72, `STORIES` 1, `USE_PHOTOS` 1, `REPORT_LEVEL`, `DEFAULT_MODE` auto.
+Tunables: `MAX_POSTS_PER_DAY` 8, `MAX_POSTS_PER_SLOT` 2, `MAX_CAREFUL_PER_DAY` 4, `CELEBRITY_PER_DAY` 6, `CELEBRITY_MIN_SCORE` 3.5, `CELEBRITY_FAST` 1, `MAX_POLITICS_PER_DAY` 2, `ARTICLE_MAX_AGE_HOURS` 48, `DATA_RETENTION_HOURS` 72, `STORIES` 1, `USE_PHOTOS` 1, `REPORT_LEVEL`, `DEFAULT_MODE` auto.
 
 ## 12. Operations
 
@@ -157,7 +185,7 @@ On demand (GitHub → Actions → Run workflow): Diagnose, Publish slot, Clean o
 | Photo missing | No licensed person-free match | Plain card, no action |
 | Outlet name instead of link | Google News link not resolved | Cosmetic |
 
-91 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
+110 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
 
 ## 13. Known limits and ideas
 

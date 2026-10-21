@@ -147,8 +147,10 @@ NAMED_ACCUSED = re.compile(
 CONVICTION_OK = re.compile(r"\b(convicted|sentenced|found guilty)\b", re.I)
 
 
-def careful_issues(draft: dict, facts_text: str) -> list:
-    """Extra checks for the careful tier. Empty list = passes."""
+def careful_issues(draft: dict, facts_text: str, allow_name: str = "") -> list:
+    """Extra checks for the careful tier. Empty list = passes. `allow_name` is a public figure who may be
+    named as the subject of the story (celebrity lane)."""
+    allowed = [w.lower() for w in re.findall(r"[A-Za-z]+", allow_name or "") if len(w) > 2]
     issues = []
     for platform in ("threads", "facebook", "instagram"):
         text = draft.get(platform) or ""
@@ -156,7 +158,7 @@ def careful_issues(draft: dict, facts_text: str) -> list:
             issues.append(f"{platform}: describes a method (suicide reporting rule)")
         if GUILT_LABELS.search(text) and not CONVICTION_OK.search(facts_text or ""):
             issues.append(f"{platform}: presents an allegation as proven (guilt label)")
-        if NAMED_ACCUSED.search(text):
+        if any(not any(w in m.group(0).lower() for w in allowed) for m in NAMED_ACCUSED.finditer(text)):
             issues.append(f"{platform}: names an accused person")
         if EMOTIVE.search(text):
             issues.append(f"{platform}: emotive wording ('{EMOTIVE.search(text).group(1)}'); keep it plain on deaths and crime")

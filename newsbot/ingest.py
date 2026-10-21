@@ -54,7 +54,7 @@ def main() -> None:
         sc = stage(log, "Scoring", lambda: pipeline.score_pending(db, trends=stage(log, "Trends", trends.fetch_trends, {})))
         if sc:
             log.add(f"Scored {sc['scored']} → {sc['candidates']} candidates "
-                    f"({sc['niche_candidates']} specialist), {sc['discarded']} discarded "
+                    f"({sc['niche_candidates']} specialist, {sc['celebrity']} celebrity), {sc['discarded']} discarded "
                     f"(below minimum {sc['below_min']}, not India {sc['not_india']}, "
                     f"opinion {sc['opinion']}, promo {sc['promo']}), too old {sc['stale']}")
             if "rate_limited" in sc:
@@ -78,6 +78,10 @@ def main() -> None:
         if cleaned and (cleaned["rows"] or cleaned["images"]):
             log.add(f"Cleanup: removed {cleaned['rows']} stories and {cleaned['images']} images older than "
                     f"{pipeline.config.DATA_RETENTION_HOURS}h (published posts are kept)")
+        stars = stage(log, "Celebrity fast-track", lambda: pipeline.celebrity_pass(db), [])
+        if stars:
+            log.add(f"Celebrity fast-track: {len(stars)} processed ({', '.join(stars)})")
+            log.mark_activity()
         breaking = stage(log, "Fast-track check", lambda: pipeline.breaking_pass(db), [])
         if breaking:
             log.mark_activity()

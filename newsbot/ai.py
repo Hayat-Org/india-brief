@@ -193,7 +193,8 @@ SCORE_FIELDS = (
     ' "category": one of ' + str(CATEGORIES) + ',\n'
     ' "state": "National" or an Indian state/UT name,\n'
     ' "significance": 1-10, "impact": 1-10, "interest": 1-10,\n'
-    ' "sensitive": bool, "sensitive_reason": "short text or empty"}'
+    ' "sensitive": bool, "sensitive_reason": "short text or empty",\n'
+    ' "celebrity": "full name of the widely known public figure the story is mainly about, or empty"}'
 )
 
 SCORE_RULES = """Scales (use the whole range; most stories are 3-6):
@@ -203,6 +204,7 @@ SCORE_RULES = """Scales (use the whole range; most stories are 3-6):
 Rules: is_india=false if it is not about India or Indians. Opinion/editorial/analysis = is_opinion true.
 Deals, discounts, astrology, fantasy-sports tips, ads = is_promotional true.
 sensitive=true for communal/religious tension, sexual offences, minors, suicide, terror, mob violence, ongoing court/legal risk, or anything where a careless post could inflame or defame.
+celebrity: only a real, widely known non-political person who is the main subject (film/TV/music star, cricketer or other athlete, influencer, business leader, author), written as in the text. Politicians, judges, officials, religious leaders and private individuals are NOT celebrities: leave it empty.
 Do not favour or disfavour any party, religion, community or ideology when scoring."""
 
 SCORE_SYSTEM = ("You are the editor-in-chief's triage assistant for a neutral Indian news desk.\n"
@@ -214,6 +216,11 @@ SCORE_SYSTEM_BATCH = (
     'Reply with JSON only: {"results": [ {"id": n, ...fields...}, ... ]} with exactly one entry per story.\n'
     "Each entry has the field \"id\" (the story's number) plus these fields:\n"
     + SCORE_FIELDS + "\n\n" + SCORE_RULES)
+
+
+def _clean_name(value) -> str:
+    name = re.sub(r"\s+", " ", str(value or "")).strip(" .,\"'")[:60]
+    return "" if name.lower() in ("", "none", "null", "n/a", "na", "no", "false", "unknown") else name
 
 
 def _normalize_score(d: dict) -> dict:
@@ -236,6 +243,7 @@ def _normalize_score(d: dict) -> dict:
         "combined": combined_score(sig, imp, inte),
         "sensitive": bool(d.get("sensitive", False)),
         "sensitive_reason": str(d.get("sensitive_reason") or "")[:120],
+        "celebrity": _clean_name(d.get("celebrity")),
     }
 
 
@@ -329,13 +337,24 @@ CAREFUL MODE (this is a crime, legal, violence, sensitive or political story). E
 """
 
 
-def write_post(article: dict, body: str, developing: bool, careful: bool = False, reasons: list = None) -> dict:
+CELEBRITY_RULES = """
+CELEBRITY STORY (the person in the CELEBRITY line is the subject). Extra rules:
+- Name the person (as written in the article) in card_headline and in the first sentence of every post text.
+- Report only what the article states. No gossip, no guesses about private life, health, money or relationships.
+- A death, illness or arrest is reported only as stated by family, hospital, police, court or an official; if the article only says "reported", say details are still emerging.
+- The person may be named as the subject even in a legal story, but attribute every allegation ("police said", "the complaint says", "the court ordered"), never call them guilty, and never identify any survivor, minor or family member.
+"""
+
+
+def write_post(article: dict, body: str, developing: bool, careful: bool = False, reasons: list = None,
+               celebrity: str = "") -> dict:
     srcs = ", ".join(s["name"] for s in article.get("sources", [])) or article.get("source", "")
     user = (
         f"STATUS: {'DEVELOPING (single source)' if developing else 'Confirmed by multiple outlets'}\n"
         f"FACT-CHECK STORY: {'yes' if article.get('is_factcheck') else 'no'}\n"
         f"SPOTLIGHT: {'yes' if article.get('spotlight') else 'no'}\n"
         f"CAREFUL MODE: {'yes' if careful else 'no'}\n"
+        f"CELEBRITY: {celebrity or 'no'}\n"
         f"OUTLETS: {srcs}\n"
         f"CATEGORY: {article.get('category')}  REGION: {article.get('state')}\n\n"
         f"HEADLINE: {article['title']}\nSUMMARY: {article.get('snippet') or ''}\n"
@@ -344,6 +363,8 @@ def write_post(article: dict, body: str, developing: bool, careful: bool = False
     from . import safety as _safety
     extra = _safety.topic_rules(reasons or []) if careful else ""
     system = draft_system() + (CAREFUL_RULES + ("\nTOPIC RULES:\n" + extra + "\n" if extra else "") if careful else "")
+    if celebrity:
+        system += CELEBRITY_RULES
     d = chat_json(system, user, "quality")
     for key in ("threads", "facebook", "instagram", "card_headline"):
         d[key] = str(d.get(key) or "").strip()

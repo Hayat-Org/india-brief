@@ -74,6 +74,9 @@ def for_platforms(draft: dict, article: dict) -> dict:
     state = article.get("state") or "National"
     place = camel(state) if state != "National" else ""
     careful = bool(draft.get("careful"))
+    celeb = camel(draft.get("celebrity") or "")
+    if celeb and not careful and 3 <= len(celeb) <= 30:  # the person's name is the lead tag
+        topic = [celeb] + [t for t in topic if t.lower() != celeb.lower()]
     category = "" if careful else CATEGORY_TAG.get(article.get("category") or "", "")
     taken = {t.lower() for t in topic}
     place = place if place.lower() not in taken else ""

@@ -148,6 +148,41 @@ NICHE_SITE_ONLY = [
 ]
 
 
+CELEBRITY_DIRECT = [
+    Feed("Times of India (Entertainment)", "https://timesofindia.indiatimes.com/rssfeeds/1081479906.cms", site="timesofindia.indiatimes.com"),
+    Feed("Hindustan Times (Entertainment)", "https://www.hindustantimes.com/feeds/rss/entertainment/rssfeed.xml", site="hindustantimes.com"),
+    Feed("Indian Express (Entertainment)", "https://indianexpress.com/section/entertainment/feed/", site="indianexpress.com"),
+    Feed("The Hindu (Entertainment)", "https://www.thehindu.com/entertainment/feeder/default.rss", site="thehindu.com"),
+    Feed("Times of India (Sports)", "https://timesofindia.indiatimes.com/rssfeeds/4719148.cms", site="timesofindia.indiatimes.com"),
+    Feed("Hindustan Times (Cricket)", "https://www.hindustantimes.com/feeds/rss/cricket/rssfeed.xml", site="hindustantimes.com"),
+    Feed("Indian Express (Sports)", "https://indianexpress.com/section/sports/feed/", site="indianexpress.com"),
+    Feed("The Hindu (Sport)", "https://www.thehindu.com/sport/feeder/default.rss", site="thehindu.com"),
+]
+CELEBRITY_TOPICS = {
+    "Film": "Bollywood OR Tollywood OR Kollywood OR Malayalam film actor",
+    "Cricket": "Indian cricketer OR BCCI OR IPL player",
+    "Music": "Indian singer OR music composer concert OR album",
+    "Business": "Indian billionaire OR industrialist OR startup founder",
+}
+
+
+def celebrity_feeds(use_google_news: bool = None) -> list:
+    """Small, fast set for the 20-minute celebrity watch: entertainment, sports and business sections,
+    topical searches, and searches for the best-known names (see celebrities.py)."""
+    from . import celebrities, config
+    if use_google_news is None:
+        use_google_news = config.USE_GOOGLE_NEWS
+    feeds = list(CELEBRITY_DIRECT)
+    if use_google_news:
+        for topic, q in CELEBRITY_TOPICS.items():
+            feeds.append(Feed(f"GN:{topic}", _gn(q), "news"))
+        groups = [celebrities.ENTERTAINMENT[:20], celebrities.ENTERTAINMENT[20:40], celebrities.SPORTS[:20],
+                  celebrities.SPORTS[20:40], celebrities.BUSINESS[:10]]
+        for n, names in enumerate(groups, 1):
+            feeds.append(Feed(f"GN:Names {n}", _gn(" OR ".join(f'"{x}"' for x in names)), "news"))
+    return feeds
+
+
 def all_feeds(use_google_news: bool = None) -> list:
     """Google News feeds are discovery-only (headline + source + link). Their terms for
     republication are unclear, so they can be switched off with USE_GOOGLE_NEWS=0."""
