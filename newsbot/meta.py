@@ -67,6 +67,26 @@ def post_threads(text: str, link, token: str, image_url: str = None) -> str:
     return _check(r, "threads publish")["id"]
 
 
+def post_threads_carousel(text: str, image_urls: list, token: str) -> str:
+    """A swipeable Threads carousel (2-20 images): one item container per image, then one carousel container."""
+    urls = [u for u in image_urls if u][:20]
+    if len(urls) < 2:
+        raise PublishError("threads carousel needs at least 2 images")
+    children = []
+    for n, url in enumerate(urls, 1):
+        r = requests.post(f"{THREADS}/me/threads", timeout=30, data={
+            "media_type": "IMAGE", "image_url": url, "is_carousel_item": "true", "access_token": token})
+        children.append(_check(r, f"threads carousel item {n}")["id"])
+    time.sleep(5)
+    r = requests.post(f"{THREADS}/me/threads", timeout=30, data={
+        "media_type": "CAROUSEL", "children": ",".join(children), "text": text, "access_token": token})
+    creation_id = _check(r, "threads carousel container")["id"]
+    time.sleep(5)
+    r = requests.post(f"{THREADS}/me/threads_publish", timeout=30, data={
+        "creation_id": creation_id, "access_token": token})
+    return _check(r, "threads carousel publish")["id"]
+
+
 def refresh_threads_token(token: str) -> dict:
     r = requests.get("https://graph.threads.net/refresh_access_token", timeout=30, params={
         "grant_type": "th_refresh_token", "access_token": token,

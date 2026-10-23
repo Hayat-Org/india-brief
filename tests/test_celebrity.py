@@ -364,3 +364,28 @@ def test_pixabay_and_pexels_reject_foreign_pictures(monkeypatch):
                           "src": {"large2x": "p2"}, "photographer": "y"}]}
     monkeypatch.setattr(photos.requests, "get", lambda *a, **k: R(indian))
     assert photos.pixabay("Delhi High Court")["url"] == "u2" and photos.pexels("Delhi High Court")["url"] == "p2"
+
+
+def test_threads_digest_text_uses_whole_headlines():
+    from newsbot import digest
+    heads = [f"Headline number {i} about something that happened in a state and what officials did next" for i in range(1, 6)]
+    text = digest._fit_threads("Today in short: 5 stories. Swipe for each one.", heads, "Sources are on our Facebook page.\n\n#IndiaNews")
+    assert len(text) <= 490 and "…" not in text and "..." not in text
+    listed = [h for h in heads if h in text]
+    assert listed == heads[:len(listed)] and 0 < len(listed) < 5
+    assert f"+{5 - len(listed)} more in the slides" in text
+    short = digest._fit_threads("Today in short: 2 stories.", ["Short one", "Short two"], "Sources.")
+    assert "more in the slides" not in short and "1. Short one" in short and "2. Short two" in short
+
+
+def test_threads_carousel_falls_back_to_cover_image(env, monkeypatch):
+    from newsbot import meta, runlog
+    db = FakeDB()
+    log = runlog.start("digest", "t")
+    monkeypatch.setattr(meta, "post_threads_carousel", lambda t, urls, k: (_ for _ in ()).throw(RuntimeError("carousel rejected")))
+    row = db.insert_article({"url": "digest:x", "title": "Today in short", "title_norm": "digest", "source_kind": "digest",
+                             "status": "approved", "sources": [], "card_url": "https://c/0.jpg",
+                             "draft": {"threads": "t", "facebook": "f", "instagram": "i", "card_headline": "d",
+                                       "slides": ["https://c/0.jpg", "https://c/1.jpg"], "alts": ["a", "b"]}})
+    assert pipeline.publish_article(db, row) == "published"
+    assert "threads" in env["posts"] and any("carousel not accepted" in w for w in log.warnings)

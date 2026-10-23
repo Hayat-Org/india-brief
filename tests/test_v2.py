@@ -115,7 +115,8 @@ def test_digest_review_then_publish(env):
     assert len(d["draft"]["threads"]) <= 490
     cb = {"id": "x", "data": f"a:{d['id']}", "message": {"chat": {"id": 42}, "message_id": 1}}
     assert pipeline.handle_callback(db, cb) == "published"
-    assert "instagram-carousel" in env["posts"] and "threads" in env["posts"] and "facebook" in env["posts"]
+    assert "instagram-carousel" in env["posts"] and "threads-carousel" in env["posts"] and "facebook" in env["posts"]
+    assert "threads" not in env["posts"]            # swipeable on Threads too, not just the cover image
 
 
 def test_digest_needs_enough_stories_and_does_not_use_daily_cap(env, monkeypatch):

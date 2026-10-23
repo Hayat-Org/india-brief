@@ -157,7 +157,7 @@ Checks: every number appears in the source; names matched (one stray name tolera
 | Facebook | Photo post | Body, notes, source link, credit, 3 tags |
 | Instagram | 1080x1350 card, caption up to 2,100 chars | Body, notes, source link (not clickable), credit, 5 tags |
 | Stories (IG and FB) | 1080x1920 image | Headline over photo, category, handle |
-| Digest | Instagram carousel (3–5 slides) | The day's top stories |
+| Digest | Swipeable carousel on Instagram and Threads (cover + one slide per story); Facebook text | The day's top stories. Threads text lists whole headlines (no cut-offs) and says "+N more in the slides" when not all fit; if Meta rejects the Threads carousel, the cover image is posted alone |
 
 Stories post after the feed post succeeds; a Story failure is a warning and never blocks the feed post. `STORIES=0` turns them off.
 
@@ -189,7 +189,7 @@ On demand (GitHub → Actions → Run workflow): Diagnose, Publish slot, Clean o
 | Photo missing | No licensed person-free match | Plain card, no action |
 | Outlet name instead of link | Google News link not resolved | Cosmetic |
 
-120 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
+122 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
 
 ## 13. Known limits and ideas
 

@@ -632,8 +632,18 @@ def publish_article(db, a: dict, only: list = None, auto: bool = False) -> str:
     image = draft["slides"][0] if is_digest and draft.get("slides") else a.get("card_url")  # every post carries a picture
     platforms = config.enabled_platforms()
     results = dict(a.get("results") or {}) if only else {}
+    def threads_step():
+        token = threads_token(db)
+        slides = draft.get("slides") or []
+        if is_digest and len(slides) >= 2:  # the digest is a swipeable carousel on Threads too
+            try:
+                return meta.post_threads_carousel(texts["threads"], slides, token)
+            except Exception as ex:
+                runlog.warn(f"threads carousel not accepted, posting the cover image only: {str(ex)[:160]}")
+        return meta.post_threads(texts["threads"], link, token, image)
+
     steps = {
-        "threads": lambda: meta.post_threads(texts["threads"], link, threads_token(db), image),
+        "threads": threads_step,
         "facebook": lambda: meta.post_facebook(texts["facebook"], link, image),
         "instagram": (lambda: meta.post_instagram_carousel(texts["instagram"], draft["slides"],
                                                            draft.get("alts")))

@@ -6,10 +6,13 @@ from . import cards, config, media, pipeline, telegram
 
 
 def _fit_threads(header: str, headlines: list, footer: str) -> str:
-    """Threads allows 500 chars: drop trailing stories until it fits."""
-    for n in range(len(headlines), 0, -1):
-        body = "\n".join(f"{i}. {pipeline.shorten(h, 85)}" for i, h in enumerate(headlines[:n], 1))
-        text = f"{header}\n\n{body}\n\n{footer}"
+    """Threads allows 500 chars. Headlines are never cut mid-sentence: list as many whole headlines as fit and
+    say how many more are in the swipeable slides, so the count always matches the cover."""
+    total = len(headlines)
+    for n in range(total, 0, -1):
+        body = "\n".join(f"{i}. {h}" for i, h in enumerate(headlines[:n], 1))
+        more = f"\n+{total - n} more in the slides" if n < total else ""
+        text = f"{header}\n\n{body}{more}\n\n{footer}"
         if len(text) <= 490:
             return text
     return header[:490]
@@ -42,7 +45,8 @@ def run_digest(db, now: datetime = None) -> str:
     alts = ["Today in short: cover"] + [f"{h}. Source: {src}" for h, src in zip(headlines, sources)]
 
     header = "Today in short: the stories that mattered across India"
-    threads = _fit_threads(header, headlines, "Sources and links on our Facebook page.\n\n#IndiaNews")
+    threads_header = f"Today in short: {len(top)} stories that mattered across India. Swipe for each one."
+    threads = _fit_threads(threads_header, headlines, "Sources are on our Facebook page.\n\n#IndiaNews")
     fb_lines = [f"{i}. {h} ({src})\n{(s['draft'].get('link') or s['url'])}"
                 for i, (h, src, s) in enumerate(zip(headlines, sources, top), 1)]
     facebook = f"{header}\n\n" + "\n\n".join(fb_lines) + "\n\n#India #IndiaNews"
