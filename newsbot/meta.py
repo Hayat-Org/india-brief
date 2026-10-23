@@ -27,7 +27,7 @@ _last_ig = [0.0]
 
 
 def _ig_pace() -> None:
-    """Keep Instagram API calls at least IG_MIN_GAP_SECONDS apart so bursts do not hit the app limit."""
+    """Keep Instagram publishes at least IG_MIN_GAP_SECONDS apart: bursts of automated posts look like spam."""
     if not config.DRY_RUN:
         wait = config.IG_MIN_GAP_SECONDS - (time.time() - _last_ig[0])
         if wait > 0:
@@ -42,9 +42,11 @@ def _check(r: requests.Response, what: str) -> dict:
         data = {}
     if r.status_code >= 300 or "error" in data:
         err = data.get("error", {})
+        usage = r.headers.get("x-app-usage") or r.headers.get("x-business-use-case-usage") or ""
         raise PublishError(
             f"{what}: HTTP {r.status_code} code={err.get('code')} "
             f"sub={err.get('error_subcode')} {err.get('message', r.text[:200])}"
+            + (f" [usage {usage[:120]}]" if usage else "")
         )
     return data
 
@@ -141,7 +143,6 @@ def _wait_container(container: str) -> None:
 def _ig_create(data: dict, what: str) -> str:
     """Create a container; if alt_text is rejected, retry once without it."""
     payload = {**data, "access_token": config.IG_TOKEN}
-    _ig_pace()
     r = requests.post(f"{GRAPH}/{config.IG_USER_ID}/media", timeout=30, data=payload)
     try:
         return _check(r, what)["id"]
@@ -159,6 +160,43 @@ def _ig_publish(container: str) -> str:
         "creation_id": container, "access_token": config.IG_TOKEN,
     })
     return _check(r, "instagram publish")["id"]
+
+
+def _norm(text: str) -> str:
+    import re
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def find_recent_instagram_post(caption: str, hours: float = 6) -> str:
+    """ID of a recent post on the account with this caption, else ''. Instagram sometimes reports an error on
+    the publish step although the post went live; checking first stops a retry from posting a duplicate."""
+    from datetime import datetime, timedelta, timezone
+    if not caption:
+        return ""
+    r = requests.get(f"{GRAPH}/{config.IG_USER_ID}/media", timeout=30, params={
+        "fields": "id,caption,timestamp", "limit": 10, "access_token": config.IG_TOKEN})
+    key = _norm(caption)[:80]
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    for m in _check(r, "instagram recent media").get("data") or []:
+        try:
+            when = datetime.strptime(m.get("timestamp", ""), "%Y-%m-%dT%H:%M:%S%z")
+        except ValueError:
+            when = datetime.now(timezone.utc)
+        if when >= cutoff and _norm(m.get("caption"))[:80] == key:
+            return m["id"]
+    return ""
+
+
+def instagram_quota() -> str:
+    """Instagram's own count of API publishes in the last 24 h, e.g. '12/100' ('' if unavailable)."""
+    try:
+        r = requests.get(f"{GRAPH}/{config.IG_USER_ID}/content_publishing_limit", timeout=20, params={
+            "fields": "quota_usage,config", "access_token": config.IG_TOKEN})
+        d = (_check(r, "instagram quota").get("data") or [{}])[0]
+        total = (d.get("config") or {}).get("quota_total")
+        return f"{d.get('quota_usage')}/{total}" if d.get("quota_usage") is not None else ""
+    except Exception:
+        return ""
 
 
 def post_instagram(caption: str, image_url: str, alt_text: str = "") -> str:
@@ -263,8 +301,9 @@ def explain_error(message: str) -> str:
     if sub == "2207042" or (code == "9" and "limit" in low):
         return "Instagram's daily publishing limit was reached. It resets within 24 hours; check for repeated manual runs."
     if sub == "2207051" or "request limit reached" in low:
-        return ("Instagram's app request limit was reached. The bot pauses Instagram for 45 minutes and retries "
-                "this post by itself (up to 12 hours), so you do not need to tap Retry.")
+        return ("Instagram refused this publish (code 4 / 2207051 is usually its anti-spam block on automated posting, "
+                "not a call count). The bot pauses Instagram for 90 minutes, checks whether the post went live anyway, "
+                "and retries by itself (up to 12 hours), so you do not need to tap Retry.")
     if code in ("4", "17", "32", "341", "613") or "rate limit" in low or "too many" in low:
         return "Rate limit hit. The bot waits and retries Instagram posts by itself; the Retry button also works."
     if code == "368":

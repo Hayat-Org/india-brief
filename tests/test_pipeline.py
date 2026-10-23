@@ -35,6 +35,8 @@ def env(monkeypatch):
     monkeypatch.setattr(meta, "post_threads", lambda t, l, k, image_url=None: sent["posts"].append("threads") or "t-1")
     monkeypatch.setattr(meta, "post_facebook", lambda t, l=None, image_url=None: sent["posts"].append("facebook") or "f-1")
     monkeypatch.setattr(meta, "post_instagram", lambda c, u, alt="": sent["posts"].append("instagram") or "i-1")
+    monkeypatch.setattr(meta, "find_recent_instagram_post", lambda caption, hours=6: "")
+    monkeypatch.setattr(meta, "instagram_quota", lambda: "")
     monkeypatch.setattr(meta, "post_threads_carousel",
                         lambda t, urls, k: sent["posts"].append("threads-carousel") or "t-2")
     monkeypatch.setattr(meta, "post_instagram_carousel",

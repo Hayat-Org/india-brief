@@ -389,3 +389,39 @@ def test_threads_carousel_falls_back_to_cover_image(env, monkeypatch):
                                        "slides": ["https://c/0.jpg", "https://c/1.jpg"], "alts": ["a", "b"]}})
     assert pipeline.publish_article(db, row) == "published"
     assert "threads" in env["posts"] and any("carousel not accepted" in w for w in log.warnings)
+
+
+def test_error_but_post_is_live_is_not_posted_twice(env, monkeypatch):
+    from newsbot import meta
+    db = FakeDB()
+    posted = []
+
+    def ig(caption, url, alt=""):
+        posted.append(url)
+        raise RuntimeError("instagram publish: HTTP 403 code=4 sub=2207051 Application request limit reached")
+    monkeypatch.setattr(meta, "post_instagram", ig)
+    monkeypatch.setattr(meta, "find_recent_instagram_post", lambda caption, hours=6: "live-123")
+    a = _approved(db, 1)
+    assert pipeline.publish_article(db, a) == "published"
+    r = db.get_article(a["id"])["results"]["instagram"]
+    assert r["ok"] and r["id"] == "live-123" and len(posted) == 1       # counted as posted, no duplicate
+    # a later retry of a post that failed earlier also looks first
+    b = _approved(db, 2)
+    db.update_article(b["id"], {"results": {"instagram": {"ok": False, "error": "x", "rate_limited": True, "tries": 1}},
+                                "status": "published", "posted_at": ago(0.1)})
+    db.set_setting("ig_cooldown_until", ago(1))
+    assert pipeline.retry_instagram_rate_limited(db) == ["published"]
+    assert len(posted) == 1 and db.get_article(b["id"])["results"]["instagram"]["id"] == "live-123"
+
+
+def test_instagram_story_daily_limit(env, monkeypatch):
+    from newsbot import meta
+    db = FakeDB()
+    sent = []
+    monkeypatch.setattr(config, "IG_STORIES_PER_DAY", 3)
+    monkeypatch.setattr(config, "enabled_platforms", lambda: ["instagram", "facebook"])
+    monkeypatch.setattr(meta, "post_instagram_story", lambda url: sent.append(("ig", url)) or "s")
+    monkeypatch.setattr(meta, "post_facebook_story", lambda url: sent.append(("fb", url)) or "s")
+    for i in range(5):
+        pipeline.post_stories({"id": i}, f"https://s/{i}.jpg", db)
+    assert sum(1 for k, _ in sent if k == "ig") == 3 and sum(1 for k, _ in sent if k == "fb") == 5

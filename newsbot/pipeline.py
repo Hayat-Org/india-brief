@@ -1,5 +1,6 @@
 """Core pipeline. Every external dependency is reached through a module attribute
 (ai, media, cards, meta, telegram) so tests can replace them."""
+import json
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -584,6 +585,22 @@ def set_ig_cooldown(db) -> None:
         pass
 
 
+def ig_story_count(db, now: datetime = None) -> int:
+    try:
+        d = json.loads(db.get_setting("ig_story_day", "") or "{}")
+        return int(d.get("n") or 0) if d.get("d") == (now or now_utc()).astimezone(IST).date().isoformat() else 0
+    except Exception:
+        return 0
+
+
+def ig_story_counted(db, now: datetime = None) -> None:
+    try:
+        day = (now or now_utc()).astimezone(IST).date().isoformat()
+        db.set_setting("ig_story_day", json.dumps({"d": day, "n": ig_story_count(db, now) + 1}))
+    except Exception:
+        pass
+
+
 def post_stories(a: dict, story_url: str, db=None) -> dict:
     """Instagram and Facebook Stories. Never blocks or fails the feed post: problems are logged as warnings."""
     out = {}
@@ -594,8 +611,13 @@ def post_stories(a: dict, story_url: str, db=None) -> dict:
         if name == "instagram" and db is not None and ig_cooldown_active(db):
             out[name] = {"ok": False, "error": "skipped: Instagram rate-limit cool-down"}
             continue
+        if name == "instagram" and db is not None and ig_story_count(db) >= config.IG_STORIES_PER_DAY:
+            out[name] = {"ok": False, "error": "skipped: daily Instagram Story limit"}
+            continue
         try:
             out[name] = {"ok": True, "id": fn(story_url)}
+            if name == "instagram" and db is not None:
+                ig_story_counted(db)
         except Exception as ex:
             out[name] = {"ok": False, "error": str(ex)[:200]}
             if name == "instagram" and db is not None and meta.is_rate_limited(str(ex)):
@@ -660,6 +682,15 @@ def publish_article(db, a: dict, only: list = None, auto: bool = False) -> str:
             results[name] = {"ok": False, "rate_limited": True, "tries": prev_tries,
                              "error": "waiting: Instagram rate-limit cool-down (retrying automatically)"}
             continue
+        if name == "instagram" and not config.DRY_RUN and not is_digest and (results.get(name) or {}).get("error"):
+            try:  # a retry: the earlier "failed" publish may actually have gone live, so look before posting again
+                found = meta.find_recent_instagram_post(texts["instagram"])
+            except Exception:
+                found = ""
+            if found:
+                results[name] = {"ok": True, "id": found, "note": "found live after an error; not posted twice"}
+                runlog.note(f"#{a['id']} instagram: post was already live (id {found}), not posted again")
+                continue
         try:
             if config.DRY_RUN:
                 print(f"[dry-run] would post to {name}:\n{texts[name]}\n")
@@ -674,6 +705,17 @@ def publish_article(db, a: dict, only: list = None, auto: bool = False) -> str:
                              **({"rate_limited": True} if limited else {}), "tries": prev_tries + 1}
             if limited and name == "instagram":
                 set_ig_cooldown(db)
+                try:  # Instagram can answer with this error although the post is live: check before calling it failed
+                    time.sleep(8)
+                    found = meta.find_recent_instagram_post(texts["instagram"]) if not is_digest else ""
+                    if found:
+                        results[name] = {"ok": True, "id": found, "note": "live despite the error"}
+                    else:
+                        quota = meta.instagram_quota()
+                        if quota:
+                            results[name]["error"] += f" [Instagram publishes in last 24h: {quota}]"
+                except Exception:
+                    pass
         time.sleep(0 if config.DRY_RUN else 3)  # polite pacing between API calls
     fb = results.get("facebook") or {}
     if fb.get("ok") and not is_digest and not config.DRY_RUN and not fb.get("comment") \

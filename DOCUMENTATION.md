@@ -173,7 +173,7 @@ Every run reports what ran, what was chosen, why anything was skipped, AI usage,
 
 Secrets are GitHub Actions secrets only and are redacted from logs: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_BUCKET`, `GROQ_API_KEY`, `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `THREADS_USER_ID`, `THREADS_ACCESS_TOKEN`, `FB_PAGE_ID`, `FB_PAGE_TOKEN`, `IG_USER_ID`, `IG_TOKEN`, `FB_APP_ID`, `FB_APP_SECRET`, optional `PIXABAY_API_KEY`, `PEXELS_API_KEY`, and `ELECTION_SILENCE` (for example `[["2026-11-01","2026-11-03"]]`, IST, inclusive).
 
-Tunables: `MAX_POSTS_PER_DAY` 8, `MAX_POSTS_PER_SLOT` 2, `MAX_CAREFUL_PER_DAY` 4, `CELEBRITY_PER_DAY` 3, `STORY_ONLY_PER_DAY` 2, `CELEBRITY_MIN_SCORE` 3.5, `CELEBRITY_FAST` 1, `MAX_POLITICS_PER_DAY` 2, `ARTICLE_MAX_AGE_HOURS` 48, `DATA_RETENTION_HOURS` 72, `STORIES` 1, `IG_COOLDOWN_MINUTES` 45, `IG_MIN_GAP_SECONDS` 20, `USE_PHOTOS` 1, `REPORT_LEVEL`, `DEFAULT_MODE` auto.
+Tunables: `MAX_POSTS_PER_DAY` 8, `MAX_POSTS_PER_SLOT` 2, `MAX_CAREFUL_PER_DAY` 4, `CELEBRITY_PER_DAY` 3, `STORY_ONLY_PER_DAY` 2, `CELEBRITY_MIN_SCORE` 3.5, `CELEBRITY_FAST` 1, `MAX_POLITICS_PER_DAY` 2, `ARTICLE_MAX_AGE_HOURS` 48, `DATA_RETENTION_HOURS` 72, `STORIES` 1, `IG_COOLDOWN_MINUTES` 90, `IG_MIN_GAP_SECONDS` 60, `IG_STORIES_PER_DAY` 3, `USE_PHOTOS` 1, `REPORT_LEVEL`, `DEFAULT_MODE` auto.
 
 ## 12. Operations
 
@@ -185,11 +185,11 @@ On demand (GitHub → Actions → Run workflow): Diagnose, Publish slot, Clean o
 | Error 190, token expired | FB/IG token expired | `/fbtoken` with a fresh token |
 | Facebook error 200 publish_actions | User token instead of Page token | `/fbtoken`, then `/retry <id>` |
 | AI error 429 | Free-tier quota | Automatic fallback model |
-| Instagram "Application request limit reached" (code 4, sub 2207051) | Meta's app-level call limit, usually after several posts and Stories close together | Automatic: Instagram pauses 45 min (posts and Stories), calls are spaced 20 s apart, and the post is retried by the hourly ingest and the fast-track watch for up to 12 h (4 tries). Shown as a warning; the Retry button also works |
+| Instagram "Application request limit reached" (code 4, sub 2207051) on the publish step | Usually Instagram's anti-spam block on automated posting, not a call count; Instagram may even publish the post while reporting the error | Automatic: Instagram publishing pauses 90 min; publishes are at least 60 s apart; Instagram Stories are capped at 3 a day; before any retry the bot checks the account's latest posts and never posts the same caption twice; retries for up to 12 h (4 tries); the warning shows Instagram's own 24 h publish count. The Retry button also works |
 | Photo missing | No licensed person-free match | Plain card, no action |
 | Outlet name instead of link | Google News link not resolved | Cosmetic |
 
-122 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
+124 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
 
 ## 13. Known limits and ideas
 
