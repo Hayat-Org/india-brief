@@ -191,7 +191,7 @@ def test_caps_do_not_crowd_out_regular_posts(env, monkeypatch):
 def test_followups_get_story_only_then_are_skipped(env, monkeypatch):
     db = FakeDB()
     stories_sent = []
-    monkeypatch.setattr(pipeline, "post_stories", lambda a, url: stories_sent.append(a["id"]))
+    monkeypatch.setattr(pipeline, "post_stories", lambda a, url, *rest: stories_sent.append(a["id"]))
     monkeypatch.setattr(ai, "write_post", lambda a, b, d, **kw: draft_for("Tiger Shroff")(a, b, d))
     monkeypatch.setattr(media_text(), "fetch_text", lambda u: "Tiger Shroff confirmed the film release on Monday, officials said.")
     monkeypatch.setattr(config, "STORIES", True)
@@ -284,3 +284,49 @@ def test_urgent_news_posts_on_single_trusted_source(env, monkeypatch):
     out = pipeline.breaking_pass(db)
     assert out and db.get_article(row["id"])["breaking"] is True
     assert sources.watch_feeds(use_google_news=True)[-1].name in {f.name for f in sources.NATIONAL_FEEDS}
+
+
+def _approved(db, n):
+    row = star_row(db, f"Floods hit district {n} badly", category="Weather & Disaster", url=f"https://x/ig{n}")
+    db.update_article(row["id"], {"draft": {"threads": "t", "facebook": "f", "instagram": "i", "card_headline": "h",
+                                            "hashtags": ["Floods"]}, "card_url": "https://cards/x.jpg", "status": "approved"})
+    return db.get_article(row["id"])
+
+
+def test_instagram_rate_limit_cooldown_and_auto_retry(env, monkeypatch):
+    from newsbot import meta, runlog
+    db = FakeDB()
+    calls = []
+    limit_msg = "instagram publish: HTTP 403 code=4 sub=2207051 Application request limit reached"
+
+    def ig(caption, url, alt=""):
+        calls.append(url)
+        if len(calls) == 1:
+            raise RuntimeError(limit_msg)
+        return "i-ok"
+    monkeypatch.setattr(meta, "post_instagram", ig)
+    log = runlog.start("publish", "test")
+    a1 = _approved(db, 1)
+    assert pipeline.publish_article(db, a1) == "published"
+    saved = db.get_article(a1["id"])
+    assert saved["results"]["instagram"]["rate_limited"] and saved["results"]["instagram"]["tries"] == 1
+    assert pipeline.ig_cooldown_active(db)
+    assert not log.errors and any("will retry automatically" in w for w in log.warnings)   # a warning, not an error
+    # a second post during the cool-down does not call Instagram at all
+    a2 = _approved(db, 2)
+    pipeline.publish_article(db, a2)
+    assert len(calls) == 1 and db.get_article(a2["id"])["results"]["instagram"]["rate_limited"]
+    # auto retry waits for the cool-down, then retries both rate-limited posts
+    assert pipeline.retry_instagram_rate_limited(db) == []
+    db.set_setting("ig_cooldown_until", ago(1))
+    assert pipeline.retry_instagram_rate_limited(db) == ["published", "published"]
+    assert db.get_article(a1["id"])["results"]["instagram"]["ok"] and db.get_article(a2["id"])["results"]["instagram"]["ok"]
+    assert pipeline.retry_instagram_rate_limited(db) == []     # nothing left to retry
+
+
+def test_rate_limit_detection():
+    from newsbot import meta
+    assert meta.is_rate_limited("instagram publish: HTTP 403 code=4 sub=2207051 Application request limit reached")
+    assert meta.is_rate_limited("x code=613 calls to this api have exceeded the rate limit")
+    assert not meta.is_rate_limited("instagram publish: HTTP 400 code=190 token expired")
+    assert "retries" in meta.explain_error("code=4 sub=2207051 Application request limit reached")

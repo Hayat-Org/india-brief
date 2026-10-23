@@ -36,6 +36,10 @@ def main() -> None:
                         log.warn("AI free limit reached: celebrity stories wait for the next run.")
                     elif sc["errors"]:
                         log.error(f"AI scoring failed for {sc['errors']} stories. " + " | ".join(sc["error_samples"]))
+        ig = stage(log, "Instagram retry", lambda: pipeline.retry_instagram_rate_limited(db), [])
+        if ig:
+            log.add(f"Instagram retry after rate limit: {len(ig)} post(s) → {', '.join(ig)}")
+            log.mark_activity()
         posted = stage(log, "Celebrity fast-track", lambda: pipeline.celebrity_pass(db), [])
         if posted:
             log.add(f"Celebrity fast-track: {len(posted)} processed ({', '.join(posted)})")

@@ -116,6 +116,12 @@ CELEBRITY_MIN_SCORE = _float("CELEBRITY_MIN_SCORE", 3.5)   # normal minimum is M
 CELEBRITY_BONUS = _float("CELEBRITY_BONUS", 0.8)
 CELEBWATCH_SCORE_LIMIT = _int("CELEBWATCH_SCORE_LIMIT", 30)  # stories scored per fast-track watch run
 
+# Instagram app-level rate limit ("Application request limit reached", code 4): back off, then retry by itself.
+IG_COOLDOWN_MINUTES = _int("IG_COOLDOWN_MINUTES", 45)   # pause all Instagram calls after a rate-limit error
+IG_MIN_GAP_SECONDS = _float("IG_MIN_GAP_SECONDS", 20.0)  # spacing between Instagram API calls
+IG_AUTO_RETRY_HOURS = _int("IG_AUTO_RETRY_HOURS", 12)    # keep retrying a rate-limited post for this long
+IG_MAX_TRIES = _int("IG_MAX_TRIES", 4)
+
 POLL_SECONDS = _int("POLL_SECONDS", 240)  # how long each approvals run keeps listening for taps
 
 # Photos: copyright-safe images only (Wikimedia Commons CC0/PD/CC BY, optional Pexels). See photos.py.

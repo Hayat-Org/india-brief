@@ -569,17 +569,37 @@ def clean_source_link(link: str) -> str:
     return media.clean_url(link)
 
 
-def post_stories(a: dict, story_url: str) -> dict:
+def ig_cooldown_active(db) -> bool:
+    try:
+        until = db.get_setting("ig_cooldown_until", "")
+        return bool(until) and now_utc() < parse_ts(until)
+    except Exception:
+        return False
+
+
+def set_ig_cooldown(db) -> None:
+    try:
+        db.set_setting("ig_cooldown_until", iso(now_utc() + timedelta(minutes=config.IG_COOLDOWN_MINUTES)))
+    except Exception:
+        pass
+
+
+def post_stories(a: dict, story_url: str, db=None) -> dict:
     """Instagram and Facebook Stories. Never blocks or fails the feed post: problems are logged as warnings."""
     out = {}
     platforms = config.enabled_platforms()
     for name, fn in (("instagram", meta.post_instagram_story), ("facebook", meta.post_facebook_story)):
         if name not in platforms:
             continue
+        if name == "instagram" and db is not None and ig_cooldown_active(db):
+            out[name] = {"ok": False, "error": "skipped: Instagram rate-limit cool-down"}
+            continue
         try:
             out[name] = {"ok": True, "id": fn(story_url)}
         except Exception as ex:
             out[name] = {"ok": False, "error": str(ex)[:200]}
+            if name == "instagram" and db is not None and meta.is_rate_limited(str(ex)):
+                set_ig_cooldown(db)
             runlog.warn(f"#{a['id']} {name} story: {str(ex)[:200]}")
         time.sleep(2)
     if out:
@@ -595,7 +615,7 @@ def fb_comment_paused(db) -> bool:
         return False
 
 
-def publish_article(db, a: dict, only: list = None) -> str:
+def publish_article(db, a: dict, only: list = None, auto: bool = False) -> str:
     """Post to every configured platform independently; one failure never blocks the others.
     `only` limits the attempt to some platforms (used by Retry); earlier results are kept."""
     draft = a["draft"]
@@ -625,6 +645,11 @@ def publish_article(db, a: dict, only: list = None) -> str:
         if name not in platforms:
             results[name] = {"ok": False, "skipped": True}
             continue
+        prev_tries = int((results.get(name) or {}).get("tries") or 0)
+        if name == "instagram" and not config.DRY_RUN and ig_cooldown_active(db):
+            results[name] = {"ok": False, "rate_limited": True, "tries": prev_tries,
+                             "error": "waiting: Instagram rate-limit cool-down (retrying automatically)"}
+            continue
         try:
             if config.DRY_RUN:
                 print(f"[dry-run] would post to {name}:\n{texts[name]}\n")
@@ -634,7 +659,11 @@ def publish_article(db, a: dict, only: list = None) -> str:
         except Exception as ex:
             err = str(ex)[:300]
             hint = meta.explain_error(err)
-            results[name] = {"ok": False, "error": err, **({"hint": hint} if hint else {})}
+            limited = meta.is_rate_limited(err)
+            results[name] = {"ok": False, "error": err, **({"hint": hint} if hint else {}),
+                             **({"rate_limited": True} if limited else {}), "tries": prev_tries + 1}
+            if limited and name == "instagram":
+                set_ig_cooldown(db)
         time.sleep(0 if config.DRY_RUN else 3)  # polite pacing between API calls
     fb = results.get("facebook") or {}
     if fb.get("ok") and not is_digest and not config.DRY_RUN and not fb.get("comment") \
@@ -659,7 +688,7 @@ def publish_article(db, a: dict, only: list = None) -> str:
         update["posted_at"] = iso(now_utc())
     db.update_article(a["id"], update)
     if ok and not only and not is_digest and draft.get("story_url") and config.STORIES and not config.DRY_RUN:
-        post_stories(a, draft["story_url"])
+        post_stories(a, draft["story_url"], db)
 
     lines = []
     for k, v in results.items():
@@ -669,14 +698,40 @@ def publish_article(db, a: dict, only: list = None) -> str:
             lines.append(f"⏭ {k} (not configured)")
         else:
             lines.append(f"❌ {k}: {v.get('error')}" + (f"\n   Likely fix: {v['hint']}" if v.get("hint") else ""))
-            runlog.error(f"#{a['id']} {k}: {v.get('error')}" + (f" → {v['hint']}" if v.get("hint") else ""))
+            if v.get("rate_limited"):  # temporary: the bot retries by itself, so it is a warning, not an error
+                runlog.warn(f"#{a['id']} {k} rate-limited, will retry automatically (try {v.get('tries', 1)}/{config.IG_MAX_TRIES})")
+            else:
+                runlog.error(f"#{a['id']} {k}: {v.get('error')}" + (f" → {v['hint']}" if v.get("hint") else ""))
     head = "Posted" if ok and not failed else ("Partly posted" if ok else "FAILED")
     marks = ", ".join(f"{k} {'✓' if v.get('ok') else '✗'}" for k, v in results.items() if not v.get("skipped"))
     runlog.note(f"#{a['id']} → {head.lower()} ({marks})")
     runlog.activity()
     buttons = [[{"text": "🔁 Retry failed platforms", "callback_data": f"t:{a['id']}"}]] if failed else None
+    if auto and not ok_now(results, only):
+        return "failed"   # an automatic retry that is still rate-limited stays quiet
     telegram.send_text(f"{head} #{a['id']}: {a['title'][:90]}\n" + "\n".join(lines), buttons=buttons)
     return "published" if ok else "failed"
+
+
+def ok_now(results: dict, only: list) -> bool:
+    return any(results.get(k, {}).get("ok") for k in (only or results))
+
+
+def retry_instagram_rate_limited(db, now: datetime = None) -> list:
+    """Retry Instagram posts that failed only because of the app request limit (after the cool-down)."""
+    now = now or now_utc()
+    out = []
+    if ig_cooldown_active(db):
+        return out
+    since = iso(now - timedelta(hours=config.IG_AUTO_RETRY_HOURS))
+    for p in db.list_posted_since(since):
+        r = (p.get("results") or {}).get("instagram") or {}
+        if r.get("ok") or not r.get("rate_limited") or int(r.get("tries") or 0) >= config.IG_MAX_TRIES or not p.get("draft"):
+            continue
+        out.append(publish_article(db, p, only=["instagram"], auto=True))
+        if ig_cooldown_active(db) or len(out) >= 3:
+            break
+    return out
 
 
 def retry_failed(db, article: dict) -> str:
@@ -850,7 +905,7 @@ def process_candidate(db, a: dict, breaking: bool = False, fast: bool = False, s
         db.update_article(a["id"], {**update, "status": "published", "posted_at": iso(now_utc()),
                                     "results": {"story_only": True}})
         if draft.get("story_url") and not config.DRY_RUN:
-            post_stories(a, draft["story_url"])
+            post_stories(a, draft["story_url"], db)
         runlog.note(f"{tag} → follow-up: Story only, no new feed post")
         runlog.activity()
         telegram.send_text(f"Story only #{a['id']}: {a['title'][:90]}\n(follow-up on a topic already posted)")

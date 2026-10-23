@@ -78,6 +78,10 @@ def main() -> None:
         if cleaned and (cleaned["rows"] or cleaned["images"]):
             log.add(f"Cleanup: removed {cleaned['rows']} stories and {cleaned['images']} images older than "
                     f"{pipeline.config.DATA_RETENTION_HOURS}h (published posts are kept)")
+        ig = stage(log, "Instagram retry", lambda: pipeline.retry_instagram_rate_limited(db), [])
+        if ig:
+            log.add(f"Instagram retry after rate limit: {len(ig)} post(s) → {', '.join(ig)}")
+            log.mark_activity()
         stars = stage(log, "Celebrity fast-track", lambda: pipeline.celebrity_pass(db), [])
         if stars:
             log.add(f"Celebrity fast-track: {len(stars)} processed ({', '.join(stars)})")
