@@ -32,6 +32,40 @@ PERSON_WORDS = re.compile(
     r"human|humans|lady|gentleman|guy|youth|teen\w*|adult|hands?|eyes)\b", re.I)
 
 
+# A photo must be shown to be Indian: its own tags/title/description have to name India, a state/UT or a major
+# city, and must not name a foreign place. Global libraries (Pixabay, Pexels) do not guarantee location.
+from .sources import STATES_AND_UTS  # noqa: E402
+
+_CITIES = ("Mumbai", "Delhi", "New Delhi", "Kolkata", "Chennai", "Bengaluru", "Bangalore", "Hyderabad", "Pune",
+           "Ahmedabad", "Jaipur", "Lucknow", "Kanpur", "Nagpur", "Indore", "Bhopal", "Patna", "Surat", "Kochi",
+           "Thiruvananthapuram", "Coimbatore", "Madurai", "Visakhapatnam", "Vijayawada", "Guwahati", "Shillong",
+           "Imphal", "Srinagar", "Leh", "Amritsar", "Ludhiana", "Varanasi", "Agra", "Mysuru", "Mysore", "Udaipur",
+           "Jodhpur", "Ranchi", "Bhubaneswar", "Cuttack", "Dehradun", "Shimla", "Gangtok", "Panaji", "Raipur",
+           "Mangaluru", "Kozhikode", "Darjeeling", "Rishikesh", "Haridwar", "Ayodhya", "Mathura", "Konark", "Hampi",
+           "Kerala", "Himalaya", "Himalayan", "Ganges", "Ganga", "Taj Mahal", "Bharat", "India", "Indian")
+INDIA_SIGNAL = re.compile(r"\b(" + "|".join(re.escape(x) for x in sorted(set(STATES_AND_UTS) | set(_CITIES), key=len, reverse=True)) + r")\b", re.I)
+FOREIGN_SIGNAL = re.compile(
+    r"\b(new york|manhattan|brooklyn|empire state|statue of liberty|london|paris|eiffel|usa|u\.s\.a|united states|"
+    r"america\w*|washington|los angeles|chicago|san francisco|las vegas|dubai|abu dhabi|singapore|china|chinese|"
+    r"shanghai|beijing|hong kong|tokyo|japan\w*|korea\w*|europe\w*|germany|berlin|moscow|russia\w*|bangkok|thailand|"
+    r"canada|toronto|australia\w*|sydney|melbourne|istanbul|turkey|egypt|cairo|pakistan\w*|bangladesh\w*|"
+    r"nepal\w*|sri lanka\w*|uk|england|scotland|italy|rome|spain|madrid|brazil|mexico|africa\w*)\b", re.I)
+
+
+def india_ok(text: str) -> bool:
+    """True only when the picture's own description points to India and to no foreign place."""
+    return bool(INDIA_SIGNAL.search(text or "")) and not FOREIGN_SIGNAL.search(text or "")
+
+
+def with_india(query: str, state: str = "") -> str:
+    """Make sure the search itself is about India: add the story's state, else 'India'."""
+    query = clean_query(query)
+    if not query or INDIA_SIGNAL.search(query):
+        return query
+    place = state if state and state != "National" else "India"
+    return clean_query(f"{query} {place}")
+
+
 def clean_query(q: str) -> str:
     q = re.sub(r"[^A-Za-z0-9 ,'\-]", " ", q or "")
     return re.sub(r"\s+", " ", q).strip()[:60]
@@ -84,7 +118,7 @@ def pick_commons(cands: list):
             continue
         if c["width"] < MIN_WIDTH or c["nonfree"] or c["restrictions"]:
             continue
-        if not license_ok(c["license"]) or PERSON_WORDS.search(c["text"]):
+        if not license_ok(c["license"]) or PERSON_WORDS.search(c["text"]) or not india_ok(c["text"]):
             continue
         author = c["artist"][:60]
         return {"url": c["url"], "credit": f"{author} / Wikimedia Commons, {c['license']}",
@@ -100,7 +134,8 @@ def pexels(query: str):
                      params={"query": query, "per_page": 15, "orientation": "portrait"})
     r.raise_for_status()
     for p in r.json().get("photos", []):
-        if PERSON_WORDS.search(f"{p.get('alt', '')} {query}") or p.get("width", 0) < MIN_WIDTH:
+        meta = f"{p.get('alt', '')} {re.sub(r'[-_/]', ' ', p.get('url', ''))}"
+        if PERSON_WORDS.search(f"{p.get('alt', '')} {query}") or p.get("width", 0) < MIN_WIDTH or not india_ok(meta):
             continue
         src = (p.get("src") or {}).get("large2x") or (p.get("src") or {}).get("large")
         if src:
@@ -120,7 +155,7 @@ def openverse(query: str):
         if lic not in ("cc0", "pdm", "by"):
             continue
         text = f"{p.get('title', '')} {' '.join(t.get('name', '') for t in p.get('tags') or [])}"
-        if PERSON_WORDS.search(text) or (p.get("width") or 0) < MIN_WIDTH or not p.get("url"):
+        if PERSON_WORDS.search(text) or (p.get("width") or 0) < MIN_WIDTH or not p.get("url") or not india_ok(text):
             continue
         label = {"cc0": "CC0", "pdm": "Public domain", "by": f"CC BY {p.get('license_version', '')}".strip()}[lic]
         creator = (p.get("creator") or "Unknown author")[:60]
@@ -140,7 +175,8 @@ def pixabay(query: str):
         r.raise_for_status()
         for p in r.json().get("hits", []):
             tags = p.get("tags", "")
-            if not tags or PERSON_WORDS.search(tags):
+            slug = re.sub(r"[-_/]", " ", p.get("pageURL", ""))  # the page URL carries the picture's title words
+            if not tags or PERSON_WORDS.search(tags) or not india_ok(f"{tags} {slug}"):
                 continue
             url = p.get("largeImageURL") or p.get("webformatURL")
             if url:

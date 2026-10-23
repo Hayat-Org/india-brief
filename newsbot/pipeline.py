@@ -875,7 +875,8 @@ def process_candidate(db, a: dict, breaking: bool = False, fast: bool = False, s
         flags.append("Developing: single outlet so far")
 
     # No photo for careful stories: a picture of a place could suggest where an alleged crime happened.
-    photo = None if careful else photos.find_photo(draft.get("photo_query") or fallback_photo_query(a))
+    photo = None if careful else photos.find_photo(
+        photos.with_india(draft.get("photo_query") or fallback_photo_query(a), a.get("state") or ""))
     if photo:
         draft["photo_credit"], draft["photo_source"] = photo["credit"], photo["source"]
         runlog.note(f"{tag} → photo from {photo['source']}")

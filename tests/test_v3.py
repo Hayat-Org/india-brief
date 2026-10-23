@@ -258,7 +258,7 @@ from newsbot import cards, photos  # noqa: E402
 def _cand(**kw):
     base = {"title": "File:Majuli sunset.jpg", "url": "https://upload/x.jpg", "width": 1400, "mime": "image/jpeg",
             "license": "CC BY 4.0", "artist": "A. Photographer", "nonfree": False, "restrictions": "",
-            "text": "Majuli island at sunset", "page": "https://commons/x"}
+            "text": "Majuli island, Assam, at sunset", "page": "https://commons/x"}
     base.update(kw)
     return base
 
@@ -530,7 +530,7 @@ def test_openverse_filters_licence_and_people(monkeypatch):
                 {"license": "by-sa", "url": "u1", "width": 2000, "title": "Sunset"},
                 {"license": "by", "url": "u2", "width": 2000, "title": "Portrait of a man"},
                 {"license": "by", "url": "u3", "width": 500, "title": "Small"},
-                {"license": "by", "license_version": "4.0", "url": "u4", "width": 2000, "title": "Majuli sunset",
+                {"license": "by", "license_version": "4.0", "url": "u4", "width": 2000, "title": "Majuli sunset, Assam, India",
                  "creator": "C. Creator", "provider": "flickr"}]}
     monkeypatch.setattr(photos.requests, "get", lambda *a, **k: R())
     hit = photos.openverse("Majuli")

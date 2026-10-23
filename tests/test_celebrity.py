@@ -330,3 +330,37 @@ def test_rate_limit_detection():
     assert meta.is_rate_limited("x code=613 calls to this api have exceeded the rate limit")
     assert not meta.is_rate_limited("instagram publish: HTTP 400 code=190 token expired")
     assert "retries" in meta.explain_error("code=4 sub=2207051 Application request limit reached")
+
+
+def test_photos_must_be_indian():
+    from newsbot import photos
+    assert photos.india_ok("Delhi High Court building, New Delhi")
+    assert photos.india_ok("monsoon rain street Kochi Kerala")
+    assert not photos.india_ok("Empire State Building, New York skyline")
+    assert not photos.india_ok("skyscraper dusk city")              # no sign it is India
+    assert not photos.india_ok("Taj Mahal replica in Dubai")       # names a foreign place
+    assert photos.with_india("Supreme Court building") == "Supreme Court building India"
+    assert photos.with_india("court building", "Kerala") == "court building Kerala"
+    assert photos.with_india("Delhi High Court building", "Delhi") == "Delhi High Court building"
+
+
+def test_pixabay_and_pexels_reject_foreign_pictures(monkeypatch):
+    from newsbot import photos
+    monkeypatch.setattr(photos.config, "PIXABAY_API_KEY", "k")
+    monkeypatch.setattr(photos.config, "PEXELS_API_KEY", "k")
+
+    class R:
+        def __init__(self, data): self.data = data
+        def raise_for_status(self): pass
+        def json(self): return self.data
+    foreign = {"hits": [{"tags": "skyscraper, dusk, city", "largeImageURL": "u1", "user": "a",
+                         "pageURL": "https://pixabay.com/photos/new-york-skyline-1/"}],
+               "photos": [{"alt": "Tall building at dusk", "width": 3000, "url": "https://pexels.com/photo/empire-state-building-9/",
+                           "src": {"large2x": "p1"}, "photographer": "x"}]}
+    monkeypatch.setattr(photos.requests, "get", lambda *a, **k: R(foreign))
+    assert photos.pixabay("court building India") is None and photos.pexels("court building India") is None
+    indian = {"hits": [{"tags": "high court, delhi, building", "largeImageURL": "u2", "user": "b", "pageURL": "https://pixabay.com/photos/delhi-court-2/"}],
+              "photos": [{"alt": "Delhi High Court building", "width": 3000, "url": "https://pexels.com/photo/delhi-court-3/",
+                          "src": {"large2x": "p2"}, "photographer": "y"}]}
+    monkeypatch.setattr(photos.requests, "get", lambda *a, **k: R(indian))
+    assert photos.pixabay("Delhi High Court")["url"] == "u2" and photos.pexels("Delhi High Court")["url"] == "p2"
