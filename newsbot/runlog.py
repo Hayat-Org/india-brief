@@ -18,7 +18,7 @@ _current = None
 REPEAT_QUIET_HOURS = 6  # an identical failure is reported once, then at most every 6 hours
 
 SECRET_ENV = ("SUPABASE_SERVICE_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "TELEGRAM_BOT_TOKEN", "THREADS_ACCESS_TOKEN",
-              "FB_PAGE_TOKEN", "IG_TOKEN", "PEXELS_API_KEY", "PIXABAY_API_KEY", "FB_APP_SECRET", "SUPABASE_URL")
+              "FB_PAGE_TOKEN", "IG_TOKEN", "IG_LOGIN_TOKEN", "PEXELS_API_KEY", "PIXABAY_API_KEY", "FB_APP_SECRET", "SUPABASE_URL")
 
 
 def redact(text: str) -> str:

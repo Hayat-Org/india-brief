@@ -167,7 +167,7 @@ Tables `articles` (one row per story: URL unique, scores, flags, status, draft J
 
 ## 10. Telegram
 
-Every run reports what ran, what was chosen, why anything was skipped, AI usage, queue and errors. Publish, digest and diagnose reports are also saved (secrets removed) to the GitHub issue "Run errors". Commands: `/status`, `/pause`, `/resume`, `/auto`, `/review`, `/retry <id>`, `/retract <id>`, `/fbtoken <token>` (message auto-deleted), `/help`. Owner chat only.
+Every run reports what ran, what was chosen, why anything was skipped, AI usage, queue and errors. Publish, digest and diagnose reports are also saved (secrets removed) to the GitHub issue "Run errors". Commands: `/status`, `/pause`, `/resume`, `/auto`, `/review`, `/retry <id>`, `/retract <id>`, `/fbtoken <token>` and `/igtoken <token>` (messages auto-deleted), `/help`. Owner chat only.
 
 ## 11. Configuration and secrets
 
@@ -185,11 +185,11 @@ On demand (GitHub → Actions → Run workflow): Diagnose, Publish slot, Clean o
 | Error 190, token expired | FB/IG token expired | `/fbtoken` with a fresh token |
 | Facebook error 200 publish_actions | User token instead of Page token | `/fbtoken`, then `/retry <id>` |
 | AI error 429 | Free-tier quota | Automatic fallback model |
-| Instagram "Application request limit reached" (code 4, sub 2207051) on the publish step | Usually Instagram's anti-spam block on automated posting, not a call count; Instagram may even publish the post while reporting the error | Automatic: Instagram publishing pauses 90 min; publishes are at least 60 s apart; Instagram Stories are capped at 3 a day; before any retry the bot checks the account's latest posts and never posts the same caption twice; retries for up to 12 h (4 tries); the warning shows Instagram's own 24 h publish count. The Retry button also works |
+| Instagram "Application request limit reached" (code 4, sub 2207051) on the publish step | Usually Instagram's anti-spam block on automated posting, not a call count; Instagram may even publish the post while reporting the error | Automatic: Instagram publishing pauses 90 min; publishes are at least 60 s apart; Instagram Stories are capped at 6 a day; before any retry the bot checks the account's latest posts and never posts the same caption twice; retries for up to 12 h (4 tries); the warning shows Instagram's own 24 h publish count. The Retry button also works. Lasting fix: connect Instagram through Instagram login (`/igtoken`, see SETUP.md), which uses `graph.instagram.com` with per-account limits |
 | Photo missing | No licensed person-free match | Plain card, no action |
 | Outlet name instead of link | Google News link not resolved | Cosmetic |
 
-126 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
+129 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
 
 ## 13. Known limits and ideas
 

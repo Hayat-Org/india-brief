@@ -455,3 +455,77 @@ def test_status_shows_story_count_and_cooldown(env):
     assert "Instagram Stories today: 0/6" in pipeline.status_text(db)
     db.set_setting("ig_cooldown_until", (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat())
     assert "paused until" in pipeline.status_text(db)
+
+
+class _Resp:
+    def __init__(self, data, status=200, headers=None):
+        self.data, self.status_code, self.headers, self.text = data, status, headers or {}, str(data)
+
+    def json(self):
+        return self.data
+
+
+def test_instagram_login_route_uses_graph_instagram_me(monkeypatch):
+    from newsbot import meta
+    calls = []
+
+    def fake_post(url, **kw):
+        calls.append(("POST", url, kw.get("data", {}).get("access_token")))
+        return _Resp({"id": "c1"} if url.endswith("/media") else {"id": "post-1"})
+
+    def fake_get(url, **kw):
+        calls.append(("GET", url, kw.get("params", {}).get("access_token")))
+        return _Resp({"status_code": "FINISHED"})
+    monkeypatch.setattr(meta.requests, "post", fake_post)
+    monkeypatch.setattr(meta.requests, "get", fake_get)
+    monkeypatch.setattr(meta.time, "sleep", lambda s: None)
+    monkeypatch.setattr(config, "DRY_RUN", True)           # no pacing delay in the test
+    monkeypatch.setattr(config, "IG_LOGIN_TOKEN", "IGTOKEN")
+    assert meta.post_instagram("caption", "https://img/1.jpg") == "post-1"
+    assert meta.post_instagram_story("https://img/s.jpg") == "post-1"
+    assert calls and all("graph.instagram.com" in u and t == "IGTOKEN" for _, u, t in calls)
+    assert any(u.endswith("/me/media") for _, u, _ in calls) and any(u.endswith("/me/media_publish") for _, u, _ in calls)
+    # without the Instagram login token the old route is used
+    calls.clear()
+    monkeypatch.setattr(config, "IG_LOGIN_TOKEN", "")
+    monkeypatch.setattr(config, "IG_USER_ID", "123")
+    monkeypatch.setattr(config, "IG_TOKEN", "PAGETOKEN")
+    meta.post_instagram("caption", "https://img/1.jpg")
+    assert calls and all("graph.facebook.com" in u and t == "PAGETOKEN" for _, u, t in calls) and any("/123/media" in u for _, u, _ in calls)
+
+
+def test_igtoken_command_saves_token_and_switches_route(env, monkeypatch):
+    from newsbot import meta, telegram
+    db = FakeDB()
+    deleted, said = [], []
+    monkeypatch.setattr(telegram, "delete_message", lambda c, m: deleted.append((c, m)))
+    monkeypatch.setattr(telegram, "send_text", lambda t, *a, **k: said.append(t))
+    monkeypatch.setattr(meta, "instagram_login_me", lambda tok: {"user_id": "1784", "username": "indiainshort.daily"})
+    monkeypatch.setattr(config, "IG_LOGIN_TOKEN", "")
+    db.set_setting("ig_cooldown_until", (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
+    msg = {"chat": {"id": 42}, "message_id": 7, "text": "/igtoken IGSECRET123"}
+    assert pipeline.handle_message(db, msg) == "/igtoken"
+    assert deleted == [(42, 7)] and db.get_setting("ig_login_token") == "IGSECRET123" and config.IG_LOGIN_TOKEN == "IGSECRET123"
+    assert any("@indiainshort.daily" in t for t in said) and not any("IGSECRET123" in t for t in said)
+    assert not pipeline.ig_cooldown_active(db)                       # a new route starts without a pause
+    assert "Instagram login" in pipeline.status_text(db)
+    # later runs pick the saved token up
+    config.IG_LOGIN_TOKEN = ""
+    pipeline.load_runtime_tokens(db)
+    assert config.IG_LOGIN_TOKEN == "IGSECRET123" and "instagram" in config.enabled_platforms()
+    config.IG_LOGIN_TOKEN = ""
+
+
+def test_weekly_health_refreshes_instagram_login_token(env, monkeypatch):
+    from newsbot import health, meta, runlog
+    db = FakeDB()
+    monkeypatch.setattr(config, "IG_LOGIN_TOKEN", "OLD")
+    monkeypatch.setattr(config, "THREADS_USER_ID", "")
+    monkeypatch.setattr(meta, "refresh_instagram_login_token", lambda t: {"access_token": "NEW", "expires_in": 5184000})
+    monkeypatch.setattr(meta, "check_tokens", lambda t: {"instagram": "ok (@x, Instagram login)"})
+    monkeypatch.setattr(pipeline, "collect_entries", lambda feeds: ([], []))
+    log = runlog.start("health", "t")
+    health.weekly(db, log)
+    assert db.get_setting("ig_login_token") == "NEW" and config.IG_LOGIN_TOKEN == "NEW"
+    assert any("refreshed (valid ~60 days)" in l for l in log.lines)
+    config.IG_LOGIN_TOKEN = ""

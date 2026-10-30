@@ -23,15 +23,24 @@ def is_rate_limited(message: str) -> bool:
                 or "request limit reached" in m.lower())
 
 
+def _ig() -> tuple:
+    """(base URL, account, token) for Instagram calls. With an Instagram Login token the calls go to
+    graph.instagram.com as /me (limits are per Instagram account); otherwise to graph.facebook.com with the Page token."""
+    if config.IG_LOGIN_TOKEN:
+        return f"https://graph.instagram.com/{config.IG_LOGIN_VERSION}", "me", config.IG_LOGIN_TOKEN
+    return GRAPH, config.IG_USER_ID, config.IG_TOKEN
+
+
 _last_ig = [0.0]
 
 
 def _ig_pace() -> None:
     """Keep Instagram publishes at least IG_MIN_GAP_SECONDS apart: bursts of automated posts look like spam."""
     if not config.DRY_RUN:
-        wait = config.IG_MIN_GAP_SECONDS - (time.time() - _last_ig[0])
+        gap = config.IG_LOGIN_GAP_SECONDS if config.IG_LOGIN_TOKEN else config.IG_MIN_GAP_SECONDS
+        wait = gap - (time.time() - _last_ig[0])
         if wait > 0:
-            time.sleep(min(wait, config.IG_MIN_GAP_SECONDS))
+            time.sleep(min(wait, gap))
     _last_ig[0] = time.time()
 
 
@@ -89,6 +98,20 @@ def post_threads_carousel(text: str, image_urls: list, token: str) -> str:
     return _check(r, "threads carousel publish")["id"]
 
 
+def refresh_instagram_login_token(token: str) -> dict:
+    """Instagram Login tokens last 60 days and can be refreshed (after 24 h old). Returns {access_token, expires_in}."""
+    r = requests.get("https://graph.instagram.com/refresh_access_token", timeout=30, params={
+        "grant_type": "ig_refresh_token", "access_token": token})
+    return _check(r, "instagram token refresh")
+
+
+def instagram_login_me(token: str) -> dict:
+    """Which Instagram account a login token belongs to: {user_id, username}."""
+    r = requests.get(f"https://graph.instagram.com/{config.IG_LOGIN_VERSION}/me", timeout=30, params={
+        "fields": "user_id,username", "access_token": token})
+    return _check(r, "instagram login check")
+
+
 def refresh_threads_token(token: str) -> dict:
     r = requests.get("https://graph.threads.net/refresh_access_token", timeout=30, params={
         "grant_type": "th_refresh_token", "access_token": token,
@@ -128,9 +151,10 @@ def delete_facebook(post_id: str) -> None:
 
 # --- Instagram ----------------------------------------------------------------
 def _wait_container(container: str) -> None:
+    base, _, token = _ig()
     for _ in range(12):  # wait up to ~60 s for processing
-        s = requests.get(f"{GRAPH}/{container}", timeout=30, params={
-            "fields": "status_code", "access_token": config.IG_TOKEN,
+        s = requests.get(f"{base}/{container}", timeout=30, params={
+            "fields": "status_code", "access_token": token,
         })
         status = _check(s, "instagram status").get("status_code")
         if status == "FINISHED":
@@ -142,22 +166,24 @@ def _wait_container(container: str) -> None:
 
 def _ig_create(data: dict, what: str) -> str:
     """Create a container; if alt_text is rejected, retry once without it."""
-    payload = {**data, "access_token": config.IG_TOKEN}
-    r = requests.post(f"{GRAPH}/{config.IG_USER_ID}/media", timeout=30, data=payload)
+    base, user, token = _ig()
+    payload = {**data, "access_token": token}
+    r = requests.post(f"{base}/{user}/media", timeout=30, data=payload)
     try:
         return _check(r, what)["id"]
     except PublishError:
         if "alt_text" not in payload:
             raise
         payload.pop("alt_text")
-        r = requests.post(f"{GRAPH}/{config.IG_USER_ID}/media", timeout=30, data=payload)
+        r = requests.post(f"{base}/{user}/media", timeout=30, data=payload)
         return _check(r, what)["id"]
 
 
 def _ig_publish(container: str) -> str:
     _ig_pace()
-    r = requests.post(f"{GRAPH}/{config.IG_USER_ID}/media_publish", timeout=30, data={
-        "creation_id": container, "access_token": config.IG_TOKEN,
+    base, user, token = _ig()
+    r = requests.post(f"{base}/{user}/media_publish", timeout=30, data={
+        "creation_id": container, "access_token": token,
     })
     return _check(r, "instagram publish")["id"]
 
@@ -173,8 +199,9 @@ def find_recent_instagram_post(caption: str, hours: float = 6) -> str:
     from datetime import datetime, timedelta, timezone
     if not caption:
         return ""
-    r = requests.get(f"{GRAPH}/{config.IG_USER_ID}/media", timeout=30, params={
-        "fields": "id,caption,timestamp", "limit": 10, "access_token": config.IG_TOKEN})
+    base, user, token = _ig()
+    r = requests.get(f"{base}/{user}/media", timeout=30, params={
+        "fields": "id,caption,timestamp", "limit": 10, "access_token": token})
     key = _norm(caption)[:80]
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     for m in _check(r, "instagram recent media").get("data") or []:
@@ -190,8 +217,9 @@ def find_recent_instagram_post(caption: str, hours: float = 6) -> str:
 def instagram_quota() -> str:
     """Instagram's own count of API publishes in the last 24 h, e.g. '12/100' ('' if unavailable)."""
     try:
-        r = requests.get(f"{GRAPH}/{config.IG_USER_ID}/content_publishing_limit", timeout=20, params={
-            "fields": "quota_usage,config", "access_token": config.IG_TOKEN})
+        base, user, token = _ig()
+        r = requests.get(f"{base}/{user}/content_publishing_limit", timeout=20, params={
+            "fields": "quota_usage,config", "access_token": token})
         d = (_check(r, "instagram quota").get("data") or [{}])[0]
         total = (d.get("config") or {}).get("quota_total")
         return f"{d.get('quota_usage')}/{total}" if d.get("quota_usage") is not None else ""
@@ -303,7 +331,8 @@ def explain_error(message: str) -> str:
     if sub == "2207051" or "request limit reached" in low:
         return ("Instagram refused this publish (code 4 / 2207051 is usually its anti-spam block on automated posting, "
                 "not a call count). The bot pauses Instagram for 90 minutes, checks whether the post went live anyway, "
-                "and retries by itself (up to 12 hours), so you do not need to tap Retry.")
+                "and retries by itself (up to 12 hours). Lasting fix: connect Instagram through Instagram login "
+                "(send /igtoken <token>; see SETUP.md), which has per-account limits.")
     if code in ("4", "17", "32", "341", "613") or "rate limit" in low or "too many" in low:
         return "Rate limit hit. The bot waits and retries Instagram posts by itself; the Retry button also works."
     if code == "368":
@@ -355,7 +384,13 @@ def check_tokens(threads_token: str) -> dict:
                 out["facebook"] = f"expires in {days:.0f} days. Send /fbtoken <new token> to renew"
         except Exception as ex:
             out["facebook"] = _with_hint(ex)
-    if config.IG_USER_ID and config.IG_TOKEN:
+    if config.IG_LOGIN_TOKEN:
+        try:
+            me = instagram_login_me(config.IG_LOGIN_TOKEN)
+            out["instagram"] = f"ok (@{me.get('username')}, Instagram login)"
+        except Exception as ex:
+            out["instagram"] = _with_hint(ex) + "\n   Fix: send /igtoken <new token> (Meta app dashboard → Instagram → API setup with Instagram login → Generate token)"
+    elif config.IG_USER_ID and config.IG_TOKEN:
         out["instagram"] = _check_instagram()
     elif config.FB_PAGE_ID and config.FB_PAGE_TOKEN:
         out["instagram"] = "not configured (IG_USER_ID missing)"

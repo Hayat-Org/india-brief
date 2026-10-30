@@ -59,6 +59,11 @@ IG_USER_ID = env("IG_USER_ID")
 FB_APP_ID = env("FB_APP_ID")          # only needed for the /fbtoken Telegram command
 FB_APP_SECRET = env("FB_APP_SECRET")
 IG_TOKEN = env("IG_TOKEN") or FB_PAGE_TOKEN
+# Instagram API with Instagram Login (graph.instagram.com): per-account limits instead of the Meta app's shared limit.
+# Saved with /igtoken in Telegram (kept in the database and refreshed weekly) or as the secret IG_LOGIN_TOKEN.
+IG_LOGIN_TOKEN = env("IG_LOGIN_TOKEN")
+IG_LOGIN_VERSION = env("IG_LOGIN_VERSION", "v21.0")
+IG_LOGIN_GAP_SECONDS = _float("IG_LOGIN_GAP_SECONDS", 20.0)
 
 # --- Behaviour ------------------------------------------------------------
 DRY_RUN = env("DRY_RUN") == "1"          # log instead of calling social APIs
@@ -165,6 +170,6 @@ def enabled_platforms() -> list:
         out.append("threads")
     if FB_PAGE_ID and FB_PAGE_TOKEN:
         out.append("facebook")
-    if IG_USER_ID and IG_TOKEN:
+    if (IG_USER_ID and IG_TOKEN) or IG_LOGIN_TOKEN:
         out.append("instagram")
     return out

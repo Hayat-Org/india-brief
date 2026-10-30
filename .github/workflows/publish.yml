@@ -52,6 +52,7 @@ jobs:
           FB_APP_ID: ${{ secrets.FB_APP_ID }}
           FB_APP_SECRET: ${{ secrets.FB_APP_SECRET }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_LOGIN_TOKEN: ${{ secrets.IG_LOGIN_TOKEN }}
           BRAND_NAME: ${{ secrets.BRAND_NAME }}
           BRAND_HANDLE: ${{ secrets.BRAND_HANDLE }}
           USE_GOOGLE_NEWS: ${{ secrets.USE_GOOGLE_NEWS }}

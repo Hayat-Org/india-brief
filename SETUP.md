@@ -174,3 +174,14 @@ Every evening (~22:10 IST) you'll also get a **Today in short** carousel to appr
 | Nothing arrives in Telegram | Check `TELEGRAM_CHAT_ID`, and that you pressed Start on the bot |
 | No candidates after ingest | Run ingest again (scoring is capped per run). Check the log for AI errors / keys |
 | Many "feeds returned nothing" | Some publishers change RSS URLs. Send me the list and I'll update `sources.py` |
+
+## Instagram through Instagram login (recommended; fixes "Application request limit reached")
+
+Posting through the Facebook Page token shares one limit across the whole Meta app. The Instagram login route (`graph.instagram.com`) has per-account limits, which is why other projects never see that error. Do this once:
+
+1. developers.facebook.com → your app → **Use cases** → the Instagram use case ("Manage messaging & content on Instagram") → **API setup with Instagram login**.
+2. While the app is in Development mode: **App roles → Roles → Instagram Testers**, add `@indiainshort.daily`, then accept the invitation in the Instagram app (Settings → Website permissions → Tester invites).
+3. In **Generate access tokens**, add the account, log in, allow `instagram_business_basic` and `instagram_business_content_publish`, and copy the token.
+4. Send `/igtoken <token>` to the bot in Telegram. The message is deleted. Instagram posts and Stories then use the new route; Facebook and Threads are unchanged.
+
+The token lasts 60 days and the weekly health job refreshes it, so this is a one-time step. If it ever fails, the health report says so; send `/igtoken` again. To go back to the old Facebook route, delete the `ig_login_token` row in the Supabase `settings` table and leave the `IG_LOGIN_TOKEN` secret empty.

@@ -40,6 +40,14 @@ def weekly(db, log) -> None:
             log.error(f"Threads token refresh FAILED: {str(ex)[:200]}\n"
                       "   Generate a new token in the Meta dashboard and update THREADS_ACCESS_TOKEN, "
                       "then run this job again.")
+    if config.IG_LOGIN_TOKEN:
+        try:
+            res = meta.refresh_instagram_login_token(config.IG_LOGIN_TOKEN)
+            db.set_setting("ig_login_token", res["access_token"])
+            config.IG_LOGIN_TOKEN = res["access_token"]
+            log.add(f"Instagram login token refreshed (valid ~{int(res.get('expires_in', 0)) // 86400} days)")
+        except Exception as ex:
+            log.warn(f"Instagram login token refresh did not work (it may be less than 24 h old): {str(ex)[:150]}")
     for platform, status in meta.check_tokens(pipeline.threads_token(db)).items():
         if status.startswith("ok"):
             log.add(f"✅ {platform}: {status}")

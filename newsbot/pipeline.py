@@ -544,6 +544,23 @@ def load_runtime_tokens(db) -> None:
                 config.IG_USER_ID = db.get_setting("ig_user_id", "")
     except Exception as ex:
         print(f"saved tokens not loaded: {str(ex)[:100]}")
+    try:
+        login = db.get_setting("ig_login_token", "")
+        if login:
+            config.IG_LOGIN_TOKEN = login
+    except Exception as ex:
+        print(f"Instagram login token not loaded: {str(ex)[:100]}")
+
+
+def save_ig_login_token(db, token: str) -> str:
+    """Check an Instagram Login token, keep it in the database and switch Instagram posting to graph.instagram.com."""
+    me = meta.instagram_login_me(token)
+    db.set_setting("ig_login_token", token)
+    db.set_setting("ig_login_saved", iso(now_utc()))
+    db.set_setting("ig_cooldown_until", "")  # a fresh route starts without a pause
+    load_runtime_tokens(db)
+    return (f"Instagram @{me.get('username')} connected through Instagram login. Instagram posts and Stories now use "
+            "this route (limits are per account). The token is refreshed automatically every week.")
 
 
 def save_fb_token(db, short_token: str) -> str:
@@ -1322,7 +1339,7 @@ def retract(db, raw_id: str) -> None:
 HELP = ("Commands:\n/status  queue, today's posts and when each job last ran\n/pause  stop all posting\n/resume  resume\n"
         "/retry <id>  retry the platforms that failed for a post\n"
         "/retract <id>  take down a published post (deletes on Facebook)\n"
-        "/fbtoken <token>  renew the Facebook/Instagram connection\n/review  approve every post here first\n/auto  post automatically (default); risky stories are skipped")
+        "/fbtoken <token>  renew the Facebook/Instagram connection\n/igtoken <token>  connect Instagram through Instagram login (fewer limits)\n/review  approve every post here first\n/auto  post automatically (default); risky stories are skipped")
 
 
 def status_text(db) -> str:
@@ -1333,7 +1350,8 @@ def status_text(db) -> str:
         f"Posted today: {len(posted)}/{config.MAX_POSTS_PER_DAY}",
         f"Awaiting your tap: {c.get('pending_review', 0)}",
         f"Candidates in queue: {c.get('candidate', 0)} · waiting to be scored: {c.get('new', 0)}",
-        f"Platforms: {', '.join(config.enabled_platforms()) or 'none configured'}",
+        f"Platforms: {', '.join(config.enabled_platforms()) or 'none configured'}"
+        f" (Instagram via {'Instagram login' if config.IG_LOGIN_TOKEN else 'Facebook Page token'})",
         f"Instagram Stories today: {ig_story_count(db)}/{config.IG_STORIES_PER_DAY}"
         + (" · Instagram publishing paused until "
            + parse_ts(db.get_setting('ig_cooldown_until', '')).astimezone(IST).strftime('%H:%M IST')
@@ -1370,6 +1388,18 @@ def handle_message(db, msg: dict) -> str:
             except Exception as ex:
                 telegram.send_text("❌ Could not connect: " + runlog.redact(str(ex))[:300]
                                    + "\nTip: generate a fresh token in the Graph API Explorer with your Page ticked and try again.")
+    elif cmd == "/igtoken":
+        token = parts[1] if len(parts) > 1 else ""
+        telegram.delete_message((msg.get("chat") or {}).get("id"), msg.get("message_id"))  # the token is a secret
+        if not token:
+            telegram.send_text("Usage: /igtoken <Instagram access token from the Meta app dashboard: Instagram → "
+                               "API setup with Instagram login → Generate token>")
+        else:
+            try:
+                telegram.send_text("✅ " + save_ig_login_token(db, token) + "\nYour message with the token was deleted.")
+            except Exception as ex:
+                telegram.send_text("❌ Could not connect: " + runlog.redact(str(ex))[:300]
+                                   + "\nTip: generate the token again for @indiainshort.daily and send it as /igtoken <token>.")
     elif cmd == "/retract":
         retract(db, parts[1] if len(parts) > 1 else "")
     elif cmd == "/retry":
