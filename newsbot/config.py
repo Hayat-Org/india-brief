@@ -119,9 +119,10 @@ CELEBWATCH_SCORE_LIMIT = _int("CELEBWATCH_SCORE_LIMIT", 30)  # stories scored pe
 # Instagram app-level rate limit ("Application request limit reached", code 4): back off, then retry by itself.
 IG_COOLDOWN_MINUTES = _int("IG_COOLDOWN_MINUTES", 90)   # pause all Instagram publishing after this error (it is usually an anti-spam block)
 IG_MIN_GAP_SECONDS = _float("IG_MIN_GAP_SECONDS", 60.0)  # minimum time between two Instagram publishes (feed posts and Stories)
-IG_STORIES_PER_DAY = _int("IG_STORIES_PER_DAY", 3)       # Instagram Stories a day (Facebook Stories are not limited)
+IG_STORIES_PER_DAY = _int("IG_STORIES_PER_DAY", 6)       # Instagram Stories a day (Facebook Stories are not limited)
 IG_AUTO_RETRY_HOURS = _int("IG_AUTO_RETRY_HOURS", 12)    # keep retrying a rate-limited post for this long
 IG_MAX_TRIES = _int("IG_MAX_TRIES", 4)
+STORY_CATCHUP_HOURS = _int("STORY_CATCHUP_HOURS", 6)    # Stories missed earlier are still posted if the post is newer than this
 
 POLL_SECONDS = _int("POLL_SECONDS", 240)  # how long each approvals run keeps listening for taps
 

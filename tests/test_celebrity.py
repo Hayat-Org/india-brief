@@ -425,3 +425,33 @@ def test_instagram_story_daily_limit(env, monkeypatch):
     for i in range(5):
         pipeline.post_stories({"id": i}, f"https://s/{i}.jpg", db)
     assert sum(1 for k, _ in sent if k == "ig") == 3 and sum(1 for k, _ in sent if k == "fb") == 5
+
+
+def test_skipped_instagram_story_is_made_up_later(env, monkeypatch):
+    from newsbot import meta
+    db = FakeDB()
+    sent = []
+    monkeypatch.setattr(config, "STORIES", True)
+    monkeypatch.setattr(meta, "post_instagram_story", lambda url: sent.append(("ig", url)) or "s-ig")
+    monkeypatch.setattr(meta, "post_facebook_story", lambda url: sent.append(("fb", url)) or "s-fb")
+    a = _approved(db, 1)
+    db.update_article(a["id"], {"draft": {**a["draft"], "story_url": "https://s/1.jpg"}})
+    db.set_setting("ig_cooldown_until", (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat())
+    assert pipeline.publish_article(db, db.get_article(a["id"])) == "published"
+    assert sent == [("fb", "https://s/1.jpg")]                              # Instagram Story skipped: cool-down (feed post too)
+    assert db.get_article(a["id"])["draft"]["stories_done"] == {"instagram": False, "facebook": True}
+    assert pipeline.catch_up_stories(db) == []                              # still cooling down
+    db.set_setting("ig_cooldown_until", ago(1))
+    assert pipeline.catch_up_stories(db) == []                              # its Instagram feed post is not up yet
+    assert pipeline.retry_instagram_rate_limited(db) == ["published"]       # ingest does this first
+    made = pipeline.catch_up_stories(db)
+    assert made and sent[-1] == ("ig", "https://s/1.jpg") and len(sent) == 2   # only Instagram, Facebook not repeated
+    assert db.get_article(a["id"])["draft"]["stories_done"] == {"instagram": True, "facebook": True}
+    assert pipeline.catch_up_stories(db) == []                              # nothing left to make up
+
+
+def test_status_shows_story_count_and_cooldown(env):
+    db = FakeDB()
+    assert "Instagram Stories today: 0/6" in pipeline.status_text(db)
+    db.set_setting("ig_cooldown_until", (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat())
+    assert "paused until" in pipeline.status_text(db)

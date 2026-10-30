@@ -159,7 +159,7 @@ Checks: every number appears in the source; names matched (one stray name tolera
 | Stories (IG and FB) | 1080x1920 image | Headline over photo, category, handle |
 | Digest | Swipeable carousel on Instagram and Threads (cover + one slide per story); Facebook text | The day's top stories. Threads text lists whole headlines (no cut-offs) and says "+N more in the slides" when not all fit; if Meta rejects the Threads carousel, the cover image is posted alone |
 
-Stories post after the feed post succeeds; a Story failure is a warning and never blocks the feed post. `STORIES=0` turns them off.
+Stories post after the feed post succeeds; a Story failure is a warning and never blocks the feed post. `STORIES=0` turns them off. Instagram Stories are limited to 6 a day (`IG_STORIES_PER_DAY`) and pause during the Instagram cool-down. Each post remembers which Stories went out; skipped ones are made up by the hourly ingest and the fast-track watch (after the cool-down, for posts up to 6 hours old, once the Instagram feed post is live). The skip reason shows in the run report, and `/status` shows Stories today and any cool-down.
 
 ## 9. Data model
 
@@ -173,7 +173,7 @@ Every run reports what ran, what was chosen, why anything was skipped, AI usage,
 
 Secrets are GitHub Actions secrets only and are redacted from logs: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_BUCKET`, `GROQ_API_KEY`, `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `THREADS_USER_ID`, `THREADS_ACCESS_TOKEN`, `FB_PAGE_ID`, `FB_PAGE_TOKEN`, `IG_USER_ID`, `IG_TOKEN`, `FB_APP_ID`, `FB_APP_SECRET`, optional `PIXABAY_API_KEY`, `PEXELS_API_KEY`, and `ELECTION_SILENCE` (for example `[["2026-11-01","2026-11-03"]]`, IST, inclusive).
 
-Tunables: `MAX_POSTS_PER_DAY` 8, `MAX_POSTS_PER_SLOT` 2, `MAX_CAREFUL_PER_DAY` 4, `CELEBRITY_PER_DAY` 3, `STORY_ONLY_PER_DAY` 2, `CELEBRITY_MIN_SCORE` 3.5, `CELEBRITY_FAST` 1, `MAX_POLITICS_PER_DAY` 2, `ARTICLE_MAX_AGE_HOURS` 48, `DATA_RETENTION_HOURS` 72, `STORIES` 1, `IG_COOLDOWN_MINUTES` 90, `IG_MIN_GAP_SECONDS` 60, `IG_STORIES_PER_DAY` 3, `USE_PHOTOS` 1, `REPORT_LEVEL`, `DEFAULT_MODE` auto.
+Tunables: `MAX_POSTS_PER_DAY` 8, `MAX_POSTS_PER_SLOT` 2, `MAX_CAREFUL_PER_DAY` 4, `CELEBRITY_PER_DAY` 3, `STORY_ONLY_PER_DAY` 2, `CELEBRITY_MIN_SCORE` 3.5, `CELEBRITY_FAST` 1, `MAX_POLITICS_PER_DAY` 2, `ARTICLE_MAX_AGE_HOURS` 48, `DATA_RETENTION_HOURS` 72, `STORIES` 1, `IG_COOLDOWN_MINUTES` 90, `IG_MIN_GAP_SECONDS` 60, `IG_STORIES_PER_DAY` 6, `USE_PHOTOS` 1, `REPORT_LEVEL`, `DEFAULT_MODE` auto.
 
 ## 12. Operations
 
@@ -189,7 +189,7 @@ On demand (GitHub → Actions → Run workflow): Diagnose, Publish slot, Clean o
 | Photo missing | No licensed person-free match | Plain card, no action |
 | Outlet name instead of link | Google News link not resolved | Cosmetic |
 
-124 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
+126 automated tests cover ingest, scoring, caps, safety, checks, hashtags, photos, cards, Stories, tokens, cleanup and Telegram.
 
 ## 13. Known limits and ideas
 

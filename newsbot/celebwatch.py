@@ -40,6 +40,10 @@ def main() -> None:
         if ig:
             log.add(f"Instagram retry after rate limit: {len(ig)} post(s) → {', '.join(ig)}")
             log.mark_activity()
+        made_up = stage(log, "Stories catch-up", lambda: pipeline.catch_up_stories(db), [])
+        if made_up:
+            log.add(f"Stories made up: {', '.join(made_up)}")
+            log.mark_activity()
         posted = stage(log, "Celebrity fast-track", lambda: pipeline.celebrity_pass(db), [])
         if posted:
             log.add(f"Celebrity fast-track: {len(posted)} processed ({', '.join(posted)})")

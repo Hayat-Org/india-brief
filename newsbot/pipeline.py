@@ -601,12 +601,13 @@ def ig_story_counted(db, now: datetime = None) -> None:
         pass
 
 
-def post_stories(a: dict, story_url: str, db=None) -> dict:
-    """Instagram and Facebook Stories. Never blocks or fails the feed post: problems are logged as warnings."""
+def post_stories(a: dict, story_url: str, db=None, only: list = None) -> dict:
+    """Instagram and Facebook Stories. Never blocks or fails the feed post: problems are logged as warnings.
+    `only` limits it to some platforms (used to make up Stories that were skipped earlier)."""
     out = {}
     platforms = config.enabled_platforms()
     for name, fn in (("instagram", meta.post_instagram_story), ("facebook", meta.post_facebook_story)):
-        if name not in platforms:
+        if name not in platforms or (only and name not in only):
             continue
         if name == "instagram" and db is not None and ig_cooldown_active(db):
             out[name] = {"ok": False, "error": "skipped: Instagram rate-limit cool-down"}
@@ -625,7 +626,52 @@ def post_stories(a: dict, story_url: str, db=None) -> dict:
             runlog.warn(f"#{a['id']} {name} story: {str(ex)[:200]}")
         time.sleep(2)
     if out:
-        runlog.note(f"#{a['id']} stories → " + ", ".join(f"{k} {'✓' if v['ok'] else '✗'}" for k, v in out.items()))
+        runlog.note(f"#{a['id']} stories → " + ", ".join(
+            f"{k} ✓" if v["ok"] else f"{k} ✗ ({str(v.get('error', ''))[:80]})" for k, v in out.items()))
+    return out
+
+
+def record_stories(db, a: dict, out: dict) -> None:
+    """Remember which Stories went out for this post, so missing ones can be made up later."""
+    if not out:
+        return
+    try:
+        fresh = db.get_article(a["id"]) or a
+        draft = dict(fresh.get("draft") or a.get("draft") or {})
+        done = dict(draft.get("stories_done") or {})
+        for k, v in out.items():
+            done[k] = bool(v.get("ok")) or bool(done.get(k))
+        draft["stories_done"] = done
+        db.update_article(a["id"], {"draft": draft})
+    except Exception as ex:
+        print(f"story status not saved: {str(ex)[:100]}")
+
+
+def catch_up_stories(db, now: datetime = None) -> list:
+    """Post Instagram Stories that were skipped (cool-down, daily limit, retried post), newest posts first,
+    for posts up to STORY_CATCHUP_HOURS old. Facebook Stories are made up the same way."""
+    now = now or now_utc()
+    out = []
+    if not config.STORIES or config.DRY_RUN or ig_cooldown_active(db):
+        return out
+    since = iso(now - timedelta(hours=config.STORY_CATCHUP_HOURS))
+    rows = sorted(db.list_posted_since(since), key=lambda p: p.get("posted_at") or "", reverse=True)
+    for p in rows:
+        draft = p.get("draft") or {}
+        if p.get("source_kind") == "digest" or not draft.get("story_url"):
+            continue
+        if not draft.get("story_only") and not ((p.get("results") or {}).get("instagram") or {}).get("ok"):
+            continue  # the feed post is not on Instagram yet; its Story follows once it is
+        done = draft.get("stories_done") or {}
+        missing = [k for k in ("instagram", "facebook") if k in config.enabled_platforms() and k in done and not done[k]]
+        if not missing or ig_story_count(db, now) >= config.IG_STORIES_PER_DAY and missing == ["instagram"]:
+            continue
+        stories_out = post_stories(p, draft["story_url"], db, only=missing)
+        record_stories(db, p, stories_out)
+        out.append(f"#{p['id']} " + "/".join(k for k, v in stories_out.items() if v.get("ok")) if any(
+            v.get("ok") for v in stories_out.values()) else f"#{p['id']} still missing")
+        if len(out) >= 3 or ig_cooldown_active(db):
+            break
     return out
 
 
@@ -740,7 +786,7 @@ def publish_article(db, a: dict, only: list = None, auto: bool = False) -> str:
         update["posted_at"] = iso(now_utc())
     db.update_article(a["id"], update)
     if ok and not only and not is_digest and draft.get("story_url") and config.STORIES and not config.DRY_RUN:
-        post_stories(a, draft["story_url"], db)
+        record_stories(db, a, post_stories(a, draft["story_url"], db))
 
     lines = []
     for k, v in results.items():
@@ -958,7 +1004,7 @@ def process_candidate(db, a: dict, breaking: bool = False, fast: bool = False, s
         db.update_article(a["id"], {**update, "status": "published", "posted_at": iso(now_utc()),
                                     "results": {"story_only": True}})
         if draft.get("story_url") and not config.DRY_RUN:
-            post_stories(a, draft["story_url"], db)
+            record_stories(db, a, post_stories(a, draft["story_url"], db))
         runlog.note(f"{tag} → follow-up: Story only, no new feed post")
         runlog.activity()
         telegram.send_text(f"Story only #{a['id']}: {a['title'][:90]}\n(follow-up on a topic already posted)")
@@ -1288,6 +1334,10 @@ def status_text(db) -> str:
         f"Awaiting your tap: {c.get('pending_review', 0)}",
         f"Candidates in queue: {c.get('candidate', 0)} · waiting to be scored: {c.get('new', 0)}",
         f"Platforms: {', '.join(config.enabled_platforms()) or 'none configured'}",
+        f"Instagram Stories today: {ig_story_count(db)}/{config.IG_STORIES_PER_DAY}"
+        + (" · Instagram publishing paused until "
+           + parse_ts(db.get_setting('ig_cooldown_until', '')).astimezone(IST).strftime('%H:%M IST')
+           if ig_cooldown_active(db) else ""),
         "", "Last runs:"] + runlog.heartbeat_lines(db))
 
 
